@@ -10,8 +10,8 @@ app.use(bodyParser.json());
 const PAGE_ACCESS_TOKEN = "EAAM6LCCIUjcBSxgNN8ZAx6udmU6H2KsSKRNhz66nQbm03BOu75xNlAQY4QweSWVjrxj7ZAP54HTteBLNsoZCzfW6wPwZCmXbctbxW0K2Ivzniouk7mZAGecRx3zAv8yWA5ZAe1qZCPZBQo9fQEpNsvdRvNXZBfLNDcj8Ue7ZAfjp16Yx6PiDSO2OFq7HOky7M3NSeKxo2gHgZDZD";
 const VERIFY_TOKEN = "12345";
 
-// 👉 [สำคัญมาก] ระบุ Page ID ของเพจคุณ เพื่อให้บอทรับคำสั่งเฉพาะฝั่งเพจ (แอดมิน) เท่านั้น
-const MY_PAGE_ID = "1308276022380261"; // ดึงมาจาก asset_id / mailbox_id ของเพจคุณในระบบ
+// 👉 ระบุ Page ID ของเพจคุณ เพื่อให้บอทรับคำสั่งเฉพาะฝั่งเพจ (แอดมิน) เท่านั้น
+const MY_PAGE_ID = "1308276022380261"; 
 
 // === ตั้งค่าเชื่อมต่อ Supabase ===
 const SUPABASE_URL = "https://ngnwpztrakicjtlwpfth.supabase.co";
@@ -37,7 +37,6 @@ app.post('/webhook', async (req, res) => {
 
     if (body.object === 'page') {
         for (const entry of body.entry) {
-            // ดึง ID ของเพจจาก entry.id
             const pageId = entry.id;
 
             if (entry.messaging) {
@@ -48,16 +47,15 @@ app.post('/webhook', async (req, res) => {
                     if (webhookEvent.message && webhookEvent.message.text && senderId) {
                         const messageText = webhookEvent.message.text.trim();
                         
-                        // 🛑 กรองคำสั่ง: เช็กว่าผู้ส่ง (senderId) คือตัวเพจ หรือตรงกับ Page ID ของเราหรือไม่
-                        // ถ้าลูกค้าทั่วไปทักมา senderId จะไม่ใช่ Page ID บอทจะข้ามทันทีไม่เอามาคำนวณ
+                        if (senderId === recipientId) continue;
+
+                        // 🛑 กรองคำสั่ง: อนุญาตเฉพาะแอดมินเพจเท่านั้น
                         if (senderId !== pageId && senderId !== MY_PAGE_ID) {
                             console.log(`==> ข้ามข้อความจากลูกค้าทั่วไป (${senderId}): ${messageText}`);
                             continue;
                         }
 
                         console.log(`==> ได้รับคำสั่งจากแอดมินเพจ (${senderId}): ${messageText}`);
-                        
-                        // บันทึกและดึงข้อมูลโดยใช้ Page ID เป็นหลัก เพื่อให้ยอดรวมเก็บไว้ที่แอดมินคนเดียว
                         await processSumMessage(pageId, messageText);
                     }
                 }
