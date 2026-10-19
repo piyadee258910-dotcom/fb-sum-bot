@@ -26,7 +26,6 @@ async function getGitHubFile() {
         const content = Buffer.from(response.data.content, 'base64').toString('utf8');
         return { data: JSON.parse(content), sha: response.data.sha };
     } catch (error) {
-        // ถ้ายังไม่มีไฟล์ ให้คืนค่าว่างและ sha เป็น null
         return { data: {}, sha: null };
     }
 }
@@ -40,7 +39,7 @@ async function saveGitHubFile(updatedData, sha) {
         const body = {
             message: "Update user logs via bot",
             content: contentEncoded,
-            sha: sha // ต้องใช้ sha ของไฟล์เดิมเพื่อทำการ Update ทับ
+            sha: sha 
         };
 
         const response = await axios.put(url, body, {
