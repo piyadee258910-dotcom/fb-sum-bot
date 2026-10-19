@@ -45,6 +45,7 @@ app.post('/webhook', async (req, res) => {
                     if (!senderId) continue;
                     if (senderId === recipientId) continue;
 
+                    // กำหนดเป้าหมายแชท (ถ้าเป็นกลุ่ม จะใช้ recipientId / ถ้าแชทเดี่ยวจะใช้ senderId เป็นหลักในการส่งกลับ)
                     let targetChatId = recipientId; 
 
                     // --- กรณีพิมพ์ข้อความปกติเข้ามา ---
@@ -52,7 +53,7 @@ app.post('/webhook', async (req, res) => {
                         const messageText = webhookEvent.message.text.trim();
                         console.log(`==> ได้รับข้อความ | Target Chat/Group ID: ${targetChatId} | Sender: ${senderId} | ข้อความ: ${messageText}`);
                         
-                        await processSumMessage(targetChatId, messageText, targetChatId);
+                        await processSumMessage(targetChatId, messageText, senderId);
                     }
 
                     // --- กรณีมีการกดปุ่ม (Postback) เช่น Persistent Menu ---
@@ -60,8 +61,7 @@ app.post('/webhook', async (req, res) => {
                         const payload = webhookEvent.postback.payload.trim();
                         console.log(`==> ได้รับปุ่มกด (Postback) | Target Chat/Group ID: ${targetChatId} | Sender: ${senderId} | Payload: ${payload}`);
 
-                        // คุณสามารถกำหนดเงื่อนไขของปุ่มได้ที่นี่ เช่น ถ้ากดปุ่มส่งยอดด่วน หรือเรียกดูสรุป
-                        await processSumMessage(targetChatId, payload, targetChatId);
+                        await processSumMessage(targetChatId, payload, senderId);
                     }
                 }
             }
@@ -124,7 +124,7 @@ function parseDateInput(inputStr) {
 }
 
 // ฟังก์ชันประมวลผลข้อความหลัก
-async function processSumMessage(chatId, messageText, targetChatId) {
+async function processSumMessage(chatId, messageText, senderId) {
     const lowerText = messageText.toLowerCase();
     const now = new Date();
     const todayStr = now.toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
@@ -133,7 +133,7 @@ async function processSumMessage(chatId, messageText, targetChatId) {
     // --- CLEAR ทั้งหมด ---
     if (lowerText === 'clear') {
         await supabase.from('user_logs').delete().eq('sender_id', chatId);
-        sendMessengerMessage(targetChatId, `🗑️ รีเซ็ตยอดและรายการทั้งหมดในกลุ่มนี้เรียบร้อย | ยอดรวม: 0`);
+        sendMessengerMessage(senderId, `🗑️ รีเซ็ตยอดและรายการทั้งหมดในกลุ่มนี้เรียบร้อย | ยอดรวม: 0`);
         return;
     }
 
@@ -141,7 +141,7 @@ async function processSumMessage(chatId, messageText, targetChatId) {
     if (lowerText.startsWith('clear ')) {
         const targetDate = parseDateInput(messageText.substring(6).trim());
         await supabase.from('user_logs').delete().eq('sender_id', chatId).eq('date_str', targetDate);
-        sendMessengerMessage(targetChatId, `🗑️ ลบข้อมูลของวันที่ ${targetDate} ในกลุ่มนี้เรียบร้อยแล้ว`);
+        sendMessengerMessage(senderId, `🗑️ ลบข้อมูลของวันที่ ${targetDate} ในกลุ่มนี้เรียบร้อยแล้ว`);
         return;
     }
 
@@ -161,10 +161,10 @@ async function processSumMessage(chatId, messageText, targetChatId) {
                 dayData.total = dayData.items.reduce((sum, item) => sum + item.amount, 0);
 
                 await saveDayData(chatId, targetDate, dayData);
-                sendMessengerMessage(targetChatId, `✏️ แก้ไขรายการที่ ${parts[2]} วันที่ ${targetDate} เป็น +${newAmount} สำเร็จ!`);
-                sendSpecificDateSummary(chatId, targetDate, targetChatId);
+                sendMessengerMessage(senderId, `✏️ แก้ไขรายการที่ ${parts[2]} วันที่ ${targetDate} เป็น +${newAmount} สำเร็จ!`);
+                sendSpecificDateSummary(chatId, targetDate, senderId);
             } else {
-                sendMessengerMessage(targetChatId, `❌ แก้ไขไม่สำเร็จ: ไม่พบวันที่หรือลำดับรายการที่ระบุ`);
+                sendMessengerMessage(senderId, `❌ แก้ไขไม่สำเร็จ: ไม่พบวันที่หรือลำดับรายการที่ระบุ`);
             }
         }
         return;
@@ -174,7 +174,7 @@ async function processSumMessage(chatId, messageText, targetChatId) {
     if (lowerText === 'sum' || lowerText === 'สรุป' || lowerText === 'list') {
         const { data: allRows } = await supabase.from('user_logs').select('*').eq('sender_id', chatId).order('date_str', { ascending: true });
         if (!allRows || allRows.length === 0) {
-            sendMessengerMessage(targetChatId, `📅 ยังไม่มีรายการค้างในระบบกลุ่มนี้`);
+            sendMessengerMessage(senderId, `📅 ยังไม่มีรายการค้างในระบบกลุ่มนี้`);
             return;
         }
 
@@ -191,19 +191,18 @@ async function processSumMessage(chatId, messageText, targetChatId) {
             }
         });
         replyText += `-------------------\n💰 ยอดรวมสุทธิทุกวัน: ${grandTotal}`;
-        sendMessengerMessage(targetChatId, replyText);
+        sendMessengerMessage(senderId, replyText);
         return;
     }
 
     // --- SUM เฉพาะวัน ---
     if (lowerText.startsWith('sum ') || lowerText.startsWith('สรุป ')) {
         const targetDate = parseDateInput(messageText.split(/\s+/)[1]);
-        sendSpecificDateSummary(chatId, targetDate, targetChatId);
+        sendSpecificDateSummary(chatId, targetDate, senderId);
         return;
     }
 
-    // --- รองรับปุ่มกดส่งคำสั่งด่วน (เช่น Payload เป็น .254 หรือคำสั่งต่างๆ) ---
-    // หากกดปุ่มที่เป็นตัวเลขหรือขึ้นต้นด้วยจุด ระบบจะนำไปบวกลบให้ทันที
+    // --- รองรับปุ่มกดส่งคำสั่งด่วน หรือพิมพ์ยอดเงิน (เช่น .254) ---
     if (messageText.startsWith('.')) {
         const addedNum = parseFloat(messageText.substring(1).trim());
         if (!isNaN(addedNum)) {
@@ -212,12 +211,12 @@ async function processSumMessage(chatId, messageText, targetChatId) {
             dayData.total = dayData.items.reduce((sum, item) => sum + item.amount, 0);
 
             await saveDayData(chatId, todayStr, dayData);
-            sendSpecificDateSummary(chatId, todayStr, targetChatId);
+            sendSpecificDateSummary(chatId, todayStr, senderId);
         }
     }
 }
 
-async function sendSpecificDateSummary(chatId, dateStr, targetChatId) {
+async function sendSpecificDateSummary(chatId, dateStr, senderId) {
     const dayData = await getDayData(chatId, dateStr);
     let replyText = `📅 [${dateStr}] รายการประจำวัน:\n`;
 
@@ -229,7 +228,7 @@ async function sendSpecificDateSummary(chatId, dateStr, targetChatId) {
         });
         replyText += `-------------------\n💰 ยอดรวมของวัน: ${dayData.total}`;
     }
-    sendMessengerMessage(targetChatId, replyText);
+    sendMessengerMessage(senderId, replyText);
 }
 
 function sendMessengerMessage(recipientId, text) {
