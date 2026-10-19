@@ -5,9 +5,9 @@ const axios = require('axios');
 const app = express();
 app.use(bodyParser.json());
 
-// ดึงค่า Token จากตัวแปรแวดล้อมบน Render
-const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
-const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
+// === ใส่ Token ของคุณลงในเครื่องหมายคำพูดตรงๆ ได้เลย ===
+const PAGE_ACCESS_TOKEN = "EAAM6LCCIUjcBSxgNN8ZAx6udmU6H2KsSKRNhz66nQbm03BOu75xNlAQY4QweSWVjrxj7ZAP54HTteBLNsoZCzfW6wPwZCmXbctbxW0K2Ivzniouk7mZAGecRx3zAv8yWA5ZAe1qZCPZBQo9fQEpNsvdRvNXZBfLNDcj8Ue7ZAfjp16Yx6PiDSO2OFq7HOky7M3NSeKxo2gHgZDZD";
+const VERIFY_TOKEN = "12345";
 
 const userTotals = {};
 
