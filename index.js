@@ -29,7 +29,7 @@ app.get('/webhook', (req, res) => {
     }
 });
 
-// 2. ส่วนสำหรับรับข้อความแชท
+// 2. ส่วนสำหรับรับข้อความแชท (รองรับทั้งแชทส่วนตัวและแชทกลุ่ม)
 app.post('/webhook', async (req, res) => {
     const body = req.body;
 
@@ -47,20 +47,15 @@ app.post('/webhook', async (req, res) => {
                         
                         if (senderId === recipientId) continue;
 
-                        console.log(`==> ได้รับข้อความจาก sender: ${senderId}, recipient: ${recipientId}, pageId: ${pageId}`);
-                        
-                        // 🔍 [จุดที่แก้ไข]: 
-                        // - ถ้า senderId ไม่ใช่เพจ (แปลว่าลูกค้าพิมพ์มา) ให้ข้าม (ไม่รับคำสั่งจากลูกค้า)
-                        const isFromPage = (senderId === pageId || senderId === MY_PAGE_ID);
-                        if (!isFromPage) {
-                            console.log(`==> ข้ามข้อความจากลูกค้า (${senderId}): ${messageText}`);
-                            continue;
-                        }
+                        // 🔍 ตรวจสอบว่าเป็นแชทกลุ่มหรือแชทเดี่ยว
+                        // ในแชทกลุ่ม Facebook จะส่งข้อมูล thread มาด้วย หรือใช้ recipientId เป็นตัวกลาง
+                        let targetChatId = recipientId; 
 
-                        // ถ้าแอดมินพิมพ์ส่งในแชทไหน แชทนั้น (recipientId) คือเป้าหมายที่จะบันทึกยอดและส่งข้อความตอบกลับ
-                        const targetChatId = recipientId;
+                        // ถ้าเป็นการส่งมาจากฝั่งเพจเอง ให้ใช้ recipientId เป็นหลักเช่นกัน
+                        // แต่ถ้าอยู่ในกลุ่ม ทุกคนพิมพ์เข้ามา ระบบจะใช้ recipientId (ที่เป็นรหัสกลุ่ม/แชทนั้นๆ) ในการแยกฐานข้อมูล
+                        console.log(`==> ได้รับข้อความ | Target Chat/Group ID: ${targetChatId} | Sender: ${senderId} | ข้อความ: ${messageText}`);
 
-                        console.log(`==> ได้รับคำสั่งจากแอดมิน ส่งไปยังแชทลูกค้า: ${targetChatId} -> ข้อความ: ${messageText}`);
+                        // ส่งไปประมวลผลคำสั่งโดยอิงตาม ID กลุ่มหรือแชทนั้นๆ
                         await processSumMessage(targetChatId, messageText, targetChatId);
                     }
                 }
@@ -133,7 +128,7 @@ async function processSumMessage(chatId, messageText, targetChatId) {
     // --- CLEAR ทั้งหมด ---
     if (lowerText === 'clear') {
         await supabase.from('user_logs').delete().eq('sender_id', chatId);
-        sendMessengerMessage(targetChatId, `🗑️ รีเซ็ตยอดและรายการทั้งหมดทุกวันเรียบร้อย | ยอดรวม: 0`);
+        sendMessengerMessage(targetChatId, `🗑️ รีเซ็ตยอดและรายการทั้งหมดในกลุ่มนี้เรียบร้อย | ยอดรวม: 0`);
         return;
     }
 
@@ -141,7 +136,7 @@ async function processSumMessage(chatId, messageText, targetChatId) {
     if (lowerText.startsWith('clear ')) {
         const targetDate = parseDateInput(messageText.substring(6).trim());
         await supabase.from('user_logs').delete().eq('sender_id', chatId).eq('date_str', targetDate);
-        sendMessengerMessage(targetChatId, `🗑️ ลบข้อมูลของวันที่ ${targetDate} เรียบร้อยแล้ว`);
+        sendMessengerMessage(targetChatId, `🗑️ ลบข้อมูลของวันที่ ${targetDate} ในกลุ่มนี้เรียบร้อยแล้ว`);
         return;
     }
 
@@ -174,12 +169,12 @@ async function processSumMessage(chatId, messageText, targetChatId) {
     if (lowerText === 'sum' || lowerText === 'สรุป' || lowerText === 'list') {
         const { data: allRows } = await supabase.from('user_logs').select('*').eq('sender_id', chatId).order('date_str', { ascending: true });
         if (!allRows || allRows.length === 0) {
-            sendMessengerMessage(targetChatId, `📅 ยังไม่มีรายการค้างในระบบ`);
+            sendMessengerMessage(targetChatId, `📅 ยังไม่มีรายการค้างในระบบกลุ่มนี้`);
             return;
         }
 
         let grandTotal = 0;
-        let replyText = `📊 สรุปยอดค้างทั้งหมดทุกวัน:\n`;
+        let replyText = `📊 สรุปยอดค้างทั้งหมดทุกวัน (กลุ่มนี้):\n`;
         allRows.forEach(row => {
             if (row.items && row.items.length > 0) {
                 replyText += `\n📅 [${row.date_str}] รายการ:\n`;
@@ -232,7 +227,7 @@ async function sendSpecificDateSummary(chatId, dateStr, targetChatId) {
 }
 
 function sendMessengerMessage(recipientId, text) {
-    if (!recipientId || recipientId === "12334" || recipientId.length < 5) return;
+    if (!recipientId || recipientId.length < 5) return;
 
     axios.post(`https://graph.facebook.com/v18.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`, {
         recipient: { id: recipientId },
