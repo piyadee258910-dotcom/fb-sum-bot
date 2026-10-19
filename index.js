@@ -29,7 +29,7 @@ app.get('/webhook', (req, res) => {
     }
 });
 
-// 2. ส่วนสำหรับรับข้อความแชท (รองรับทั้งข้อความปกติ และ message_echoes)
+// 2. ส่วนสำหรับรับข้อความแชทและปุ่มกด (รองรับทั้งแชทส่วนตัว, กลุ่ม และ Postback)
 app.post('/webhook', async (req, res) => {
     const body = req.body;
 
@@ -39,34 +39,29 @@ app.post('/webhook', async (req, res) => {
 
             if (entry.messaging) {
                 for (const webhookEvent of entry.messaging) {
-                    let senderId = webhookEvent.sender ? webhookEvent.sender.id : null;
-                    let recipientId = webhookEvent.recipient ? webhookEvent.recipient.id : null;
-                    let messageObj = webhookEvent.message;
+                    const senderId = webhookEvent.sender ? webhookEvent.sender.id : null;
+                    const recipientId = webhookEvent.recipient ? webhookEvent.recipient.id : null;
 
-                    // 🔍 [จุดสำคัญ] ถ้าเป็น message_echoes (ข้อความที่เพจส่งออกไป)
-                    if (webhookEvent.message && webhookEvent.message.is_echo) {
-                        console.log(`==> ตรวจพบข้อความที่เพจส่งออกไป (Echo): ${messageObj.text}`);
+                    if (!senderId) continue;
+                    if (senderId === recipientId) continue;
+
+                    let targetChatId = recipientId; 
+
+                    // --- กรณีพิมพ์ข้อความปกติเข้ามา ---
+                    if (webhookEvent.message && webhookEvent.message.text) {
+                        const messageText = webhookEvent.message.text.trim();
+                        console.log(`==> ได้รับข้อความ | Target Chat/Group ID: ${targetChatId} | Sender: ${senderId} | ข้อความ: ${messageText}`);
                         
-                        // สำหรับ echo: sender คือเพจ, recipient คือลูกค้า
-                        // เราต้องสลับเป้าหมายให้เก็บยอดลงที่ "recipientId" (ไอดีลูกค้าที่เพจคุยด้วย)
-                        let targetChatId = recipientId;
-                        let messageText = messageObj.text.trim();
-
-                        if (targetChatId && messageText) {
-                            await processSumMessage(targetChatId, messageText, targetChatId);
-                        }
-                        continue;
+                        await processSumMessage(targetChatId, messageText, targetChatId);
                     }
 
-                    // ข้อความปกติทั่วไป (ลูกค้าพิมพ์มา)
-                    if (messageObj && messageObj.text && senderId) {
-                        const messageText = messageObj.text.trim();
-                        if (senderId === recipientId) continue;
+                    // --- กรณีมีการกดปุ่ม (Postback) เช่น Persistent Menu ---
+                    if (webhookEvent.postback && webhookEvent.postback.payload) {
+                        const payload = webhookEvent.postback.payload.trim();
+                        console.log(`==> ได้รับปุ่มกด (Postback) | Target Chat/Group ID: ${targetChatId} | Sender: ${senderId} | Payload: ${payload}`);
 
-                        let targetChatId = senderId;
-                        console.log(`==> ลูกค้าพิมพ์มา (${targetChatId}): ${messageText}`);
-
-                        await processSumMessage(targetChatId, messageText, targetChatId);
+                        // คุณสามารถกำหนดเงื่อนไขของปุ่มได้ที่นี่ เช่น ถ้ากดปุ่มส่งยอดด่วน หรือเรียกดูสรุป
+                        await processSumMessage(targetChatId, payload, targetChatId);
                     }
                 }
             }
@@ -138,7 +133,7 @@ async function processSumMessage(chatId, messageText, targetChatId) {
     // --- CLEAR ทั้งหมด ---
     if (lowerText === 'clear') {
         await supabase.from('user_logs').delete().eq('sender_id', chatId);
-        sendMessengerMessage(targetChatId, `🗑️ รีเซ็ตยอดและรายการทั้งหมดเรียบร้อย | ยอดรวม: 0`);
+        sendMessengerMessage(targetChatId, `🗑️ รีเซ็ตยอดและรายการทั้งหมดในกลุ่มนี้เรียบร้อย | ยอดรวม: 0`);
         return;
     }
 
@@ -146,7 +141,7 @@ async function processSumMessage(chatId, messageText, targetChatId) {
     if (lowerText.startsWith('clear ')) {
         const targetDate = parseDateInput(messageText.substring(6).trim());
         await supabase.from('user_logs').delete().eq('sender_id', chatId).eq('date_str', targetDate);
-        sendMessengerMessage(targetChatId, `🗑️ ลบข้อมูลของวันที่ ${targetDate} เรียบร้อยแล้ว`);
+        sendMessengerMessage(targetChatId, `🗑️ ลบข้อมูลของวันที่ ${targetDate} ในกลุ่มนี้เรียบร้อยแล้ว`);
         return;
     }
 
@@ -179,12 +174,12 @@ async function processSumMessage(chatId, messageText, targetChatId) {
     if (lowerText === 'sum' || lowerText === 'สรุป' || lowerText === 'list') {
         const { data: allRows } = await supabase.from('user_logs').select('*').eq('sender_id', chatId).order('date_str', { ascending: true });
         if (!allRows || allRows.length === 0) {
-            sendMessengerMessage(targetChatId, `📅 ยังไม่มีรายการค้างในระบบ`);
+            sendMessengerMessage(targetChatId, `📅 ยังไม่มีรายการค้างในระบบกลุ่มนี้`);
             return;
         }
 
         let grandTotal = 0;
-        let replyText = `📊 สรุปยอดค้างทั้งหมดทุกวัน:\n`;
+        let replyText = `📊 สรุปยอดค้างทั้งหมดทุกวัน (กลุ่มนี้):\n`;
         allRows.forEach(row => {
             if (row.items && row.items.length > 0) {
                 replyText += `\n📅 [${row.date_str}] รายการ:\n`;
@@ -207,13 +202,13 @@ async function processSumMessage(chatId, messageText, targetChatId) {
         return;
     }
 
-    // --- บวกลบเลขปกติ (.) ---
+    // --- รองรับปุ่มกดส่งคำสั่งด่วน (เช่น Payload เป็น .254 หรือคำสั่งต่างๆ) ---
+    // หากกดปุ่มที่เป็นตัวเลขหรือขึ้นต้นด้วยจุด ระบบจะนำไปบวกลบให้ทันที
     if (messageText.startsWith('.')) {
         const addedNum = parseFloat(messageText.substring(1).trim());
         if (!isNaN(addedNum)) {
             let dayData = await getDayData(chatId, todayStr);
             dayData.items.push({ time: timeStr, amount: addedNum });
-            dayData.items.total = dayData.items.reduce((sum, item) => sum + item.amount, 0); // (แก้ปัญหาประมวลผล total)
             dayData.total = dayData.items.reduce((sum, item) => sum + item.amount, 0);
 
             await saveDayData(chatId, todayStr, dayData);
@@ -244,7 +239,7 @@ function sendMessengerMessage(recipientId, text) {
         recipient: { id: recipientId },
         message: { text: text }
     })
-    .catch(err => console.err ? console.error('Error sending message:', err.response ? err.response.data : err.message) : null);
+    .catch(err => console.error('Error sending message:', err.response ? err.response.data : err.message));
 }
 
 const PORT = process.env.PORT || 3000;
