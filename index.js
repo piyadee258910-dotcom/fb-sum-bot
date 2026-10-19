@@ -26,29 +26,36 @@ app.get('/webhook', (req, res) => {
 
 // 2. ส่วนสำหรับรับข้อความแชทเพื่อบวกเลข
 app.post('/webhook', (req, res) => {
+    // พิมพ์ข้อมูลดิบทั้งหมดที่ Facebook ส่งมาลงใน Logs ของ Render เพื่อตรวจสอบ
+    console.log("==> RECEIVED WEBHOOK BODY:", JSON.stringify(req.body, null, 2));
+
     const body = req.body;
 
     if (body.object === 'page') {
         body.entry.forEach(entry => {
-            const webhookEvent = entry.messaging[0];
-            const senderId = webhookEvent.sender.id;
+            // เช็กโครงสร้างป้องกัน Error กรณีทดสอบส่งจากหน้า Developer
+            if (entry.messaging && entry.messaging[0]) {
+                const webhookEvent = entry.messaging[0];
+                const senderId = webhookEvent.sender.id;
 
-            if (webhookEvent.message && webhookEvent.message.text) {
-                const messageText = webhookEvent.message.text.trim();
+                if (webhookEvent.message && webhookEvent.message.text) {
+                    const messageText = webhookEvent.message.text.trim();
+                    console.log(`==> ได้รับข้อความจาก Sender ID ${senderId}: ${messageText}`);
 
-                if (messageText.startsWith('.')) {
-                    const numStr = messageText.substring(1).trim();
-                    const addedNum = parseFloat(numStr);
+                    if (messageText.startsWith('.')) {
+                        const numStr = messageText.substring(1).trim();
+                        const addedNum = parseFloat(numStr);
 
-                    if (!isNaN(addedNum)) {
-                        if (!userTotals[senderId]) {
-                            userTotals[senderId] = 0;
+                        if (!isNaN(addedNum)) {
+                            if (!userTotals[senderId]) {
+                                userTotals[senderId] = 0;
+                            }
+
+                            userTotals[senderId] += addedNum;
+
+                            const replyText = `บวกเพิ่ม: ${addedNum} | ยอดรวมสะสม: ${userTotals[senderId]}`;
+                            sendMessengerMessage(senderId, replyText);
                         }
-
-                        userTotals[senderId] += addedNum;
-
-                        const replyText = `บวกเพิ่ม: ${addedNum} | ยอดรวมสะสม: ${userTotals[senderId]}`;
-                        sendMessengerMessage(senderId, replyText);
                     }
                 }
             }
@@ -65,7 +72,8 @@ function sendMessengerMessage(recipientId, text) {
         recipient: { id: recipientId },
         message: { text: text }
     })
-    .catch(err => console.error('Error sending message:', err));
+    .then(() => console.log(`==> ส่งข้อความหา ${recipientId} สำเร็จ`))
+    .catch(err => console.error('Error sending message:', err.response ? err.response.data : err.message));
 }
 
 // ใช้ Port ที่ Cloud hosting กำหนดให้
