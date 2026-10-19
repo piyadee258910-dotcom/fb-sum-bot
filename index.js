@@ -145,31 +145,6 @@ async function processSumMessage(chatId, messageText, senderId) {
         return;
     }
 
-    // --- EDIT รายการ ---
-    if (lowerText.startsWith('edit ')) {
-        const parts = messageText.split(/\s+/);
-        if (parts.length >= 4) {
-            const targetDate = parseDateInput(parts[1]);
-            const indexNo = parseInt(parts[2]) - 1;
-            const newAmount = parseFloat(parts[3]);
-
-            let dayData = await getDayData(chatId, targetDate);
-            if (dayData.items[indexNo] !== undefined && !isNaN(newAmount)) {
-                dayData.items[indexNo].amount = newAmount;
-                dayData.items[indexNo].time = timeStr;
-
-                dayData.total = dayData.items.reduce((sum, item) => sum + item.amount, 0);
-
-                await saveDayData(chatId, targetDate, dayData);
-                sendMessengerMessage(senderId, `✏️ แก้ไขรายการที่ ${parts[2]} วันที่ ${targetDate} เป็น +${newAmount} สำเร็จ!`);
-                sendSpecificDateSummary(chatId, targetDate, senderId);
-            } else {
-                sendMessengerMessage(senderId, `❌ แก้ไขไม่สำเร็จ: ไม่พบวันที่หรือลำดับรายการที่ระบุ`);
-            }
-        }
-        return;
-    }
-
     // --- SUM ทั้งหมด ---
     if (lowerText === 'sum' || lowerText === 'สรุป' || lowerText === 'list') {
         const { data: allRows } = await supabase.from('user_logs').select('*').eq('sender_id', chatId).order('date_str', { ascending: true });
