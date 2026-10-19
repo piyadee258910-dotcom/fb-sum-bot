@@ -29,7 +29,7 @@ app.get('/webhook', (req, res) => {
     }
 });
 
-// 2. ส่วนสำหรับรับข้อความแชทและปุ่มกด (รองรับทั้งแชทส่วนตัว, กลุ่ม และ Postback)
+// 2. ส่วนสำหรับรับข้อความแชทและปุ่มกด
 app.post('/webhook', async (req, res) => {
     const body = req.body;
 
@@ -45,10 +45,8 @@ app.post('/webhook', async (req, res) => {
                     if (!senderId) continue;
                     if (senderId === recipientId) continue;
 
-                    // กำหนดเป้าหมายแชท (ถ้าเป็นกลุ่ม จะใช้ recipientId / ถ้าแชทเดี่ยวจะใช้ senderId เป็นหลักในการส่งกลับ)
                     let targetChatId = recipientId; 
 
-                    // --- กรณีพิมพ์ข้อความปกติเข้ามา ---
                     if (webhookEvent.message && webhookEvent.message.text) {
                         const messageText = webhookEvent.message.text.trim();
                         console.log(`==> ได้รับข้อความ | Target Chat/Group ID: ${targetChatId} | Sender: ${senderId} | ข้อความ: ${messageText}`);
@@ -56,7 +54,6 @@ app.post('/webhook', async (req, res) => {
                         await processSumMessage(targetChatId, messageText, senderId);
                     }
 
-                    // --- กรณีมีการกดปุ่ม (Postback) เช่น Persistent Menu หรือปุ่มกด ---
                     if (webhookEvent.postback && webhookEvent.postback.payload) {
                         const payload = webhookEvent.postback.payload.trim();
                         console.log(`==> ได้รับปุ่มกด (Postback) | Target Chat/Group ID: ${targetChatId} | Sender: ${senderId} | Payload: ${payload}`);
@@ -72,7 +69,6 @@ app.post('/webhook', async (req, res) => {
     }
 });
 
-// ฟังก์ชันดึงข้อมูลจาก Supabase
 async function getDayData(chatId, dateStr) {
     const { data, error } = await supabase
         .from('user_logs')
@@ -87,7 +83,6 @@ async function getDayData(chatId, dateStr) {
     return { total: data.total, items: data.items };
 }
 
-// ฟังก์ชันบันทึกข้อมูลลง Supabase (ใช้ upsert ป้องกันบันทึกไม่เข้า)
 async function saveDayData(chatId, dateStr, dayData) {
     const { error } = await supabase
         .from('user_logs')
@@ -105,7 +100,6 @@ async function saveDayData(chatId, dateStr, dayData) {
     }
 }
 
-// ฟังก์ชันแปลงวันที่
 function parseDateInput(inputStr) {
     inputStr = inputStr.trim();
     const parts = inputStr.split('/');
@@ -119,44 +113,43 @@ function parseDateInput(inputStr) {
     return inputStr; 
 }
 
-// ฟังก์ชันประมวลผลข้อความหลัก
 async function processSumMessage(chatId, messageText, senderId) {
     const lowerText = messageText.toLowerCase();
     const now = new Date();
     const todayStr = now.toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
     const timeStr = now.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Bangkok' });
 
-    // --- 1. ถ้าพิมพ์แค่จุด (.) ตัวเดียว ให้ส่งปุ่มเมนูโต้ตอบกลับไป ---
+    // 1. ถ้าพิมพ์จุด (.) ตัวเดียว ให้เด้งปุ่มเมนู
     if (messageText === '.') {
         sendInteractiveMenu(senderId);
         return;
     }
 
-    // --- 2. CLEAR ทั้งหมด ---
+    // 2. CLEAR ทั้งหมด
     if (lowerText === 'clear') {
         await supabase.from('user_logs').delete().eq('sender_id', chatId);
-        sendMessengerMessage(senderId, `🗑️ รีเซ็ตยอดและรายการทั้งหมดในกลุ่มนี้เรียบร้อย | ยอดรวม: 0`);
+        sendMessengerMessage(senderId, `🗑️ รีเซ็ตยอดและรายการทั้งหมดเรียบร้อย | ยอดรวม: 0`);
         return;
     }
 
-    // --- 3. CLEAR เฉพาะวัน ---
+    // 3. CLEAR เฉพาะวัน
     if (lowerText.startsWith('clear ')) {
         const targetDate = parseDateInput(messageText.substring(6).trim());
         await supabase.from('user_logs').delete().eq('sender_id', chatId).eq('date_str', targetDate);
-        sendMessengerMessage(senderId, `🗑️ ลบข้อมูลของวันที่ ${targetDate} ในกลุ่มนี้เรียบร้อยแล้ว`);
+        sendMessengerMessage(senderId, `🗑️ ลบข้อมูลของวันที่ ${targetDate} เรียบร้อยแล้ว`);
         return;
     }
 
-    // --- 4. SUM ทั้งหมด ---
+    // 4. SUM ทั้งหมด
     if (lowerText === 'sum' || lowerText === 'สรุป' || lowerText === 'list') {
         const { data: allRows } = await supabase.from('user_logs').select('*').eq('sender_id', chatId).order('date_str', { ascending: true });
         if (!allRows || allRows.length === 0) {
-            sendMessengerMessage(senderId, `📅 ยังไม่มีรายการค้างในระบบกลุ่มนี้`);
+            sendMessengerMessage(senderId, `📅 ยังไม่มีรายการค้างในระบบ`);
             return;
         }
 
         let grandTotal = 0;
-        let replyText = `📊 สรุปยอดค้างทั้งหมดทุกวัน (กลุ่มนี้):\n`;
+        let replyText = `📊 สรุปยอดค้างทั้งหมดทุกวัน:\n`;
         allRows.forEach(row => {
             if (row.items && row.items.length > 0) {
                 replyText += `\n📅 [${row.date_str}] รายการ:\n`;
@@ -172,14 +165,14 @@ async function processSumMessage(chatId, messageText, senderId) {
         return;
     }
 
-    // --- 5. SUM เฉพาะวัน ---
+    // 5. SUM เฉพาะวัน
     if (lowerText.startsWith('sum ') || lowerText.startsWith('สรุป ')) {
         const targetDate = parseDateInput(messageText.split(/\s+/)[1]);
         sendSpecificDateSummary(chatId, targetDate, senderId);
         return;
     }
 
-    // --- 6. รองรับพิมพ์ยอดเงินต่อท้ายจุด (เช่น .254) ---
+    // 6. รองรับพิมพ์ยอดเงิน (เช่น .254)
     if (messageText.startsWith('.')) {
         const addedNum = parseFloat(messageText.substring(1).trim());
         if (!isNaN(addedNum)) {
@@ -208,7 +201,6 @@ async function sendSpecificDateSummary(chatId, dateStr, senderId) {
     sendMessengerMessage(senderId, replyText);
 }
 
-// ฟังก์ชันส่งการ์ดปุ่มเมนูแบบเลือกตอบ (Interactive Menu)
 function sendInteractiveMenu(recipientId) {
     axios.post(`https://graph.facebook.com/v18.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`, {
         recipient: { id: recipientId },
@@ -219,21 +211,9 @@ function sendInteractiveMenu(recipientId) {
                     template_type: "button",
                     text: "📌 กรุณาเลือกคำสั่งที่ต้องการทำต่อ:",
                     buttons: [
-                        {
-                            type: "postback",
-                            title: "➕ เพิ่มยอดด่วน (.254)",
-                            payload: ".254"
-                        },
-                        {
-                            type: "postback",
-                            title: "📊 ดูสรุปยอดวันนี้",
-                            payload: "สรุป"
-                        },
-                        {
-                            type: "postback",
-                            title: "🗑️ ล้างข้อมูลวันนี้",
-                            payload: "clear"
-                        }
+                        { type: "postback", title: "➕ เพิ่มยอดด่วน (.254)", payload: ".254" },
+                        { type: "postback", title: "📊 ดูสรุปยอดวันนี้", payload: "สรุป" },
+                        { type: "postback", title: "🗑️ ล้างข้อมูลวันนี้", payload: "clear" }
                     ]
                 }
             }
