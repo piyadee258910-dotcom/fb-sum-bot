@@ -1,20 +1,17 @@
 const express = require('express');
 const bodyParser = require('body-parser');
 const axios = require('axios');
-const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
 app.use(bodyParser.json());
 
 // === Token และข้อมูลเพจของคุณ ===
-const PAGE_ACCESS_TOKEN = "EAAM6LCCIUjcBSxgNN8ZAx6udmU6H2KsSKRNhz66nQbm03BOu75xNlAQY4QweSWVjrxj7ZAP54HTteBLNsoZCzfW6wPwZCmXbctbxW0K2Ivzniouk7mZAGecRx3zAv8yWA5ZAe1qZCPZBQo9fQEpNsvdRvNXZBfLNDcj8Ue7ZAfjp16Yx6PiDSO2OFq7HOky7M3NSeKxo2gHgZDZD";
+const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN || "EAAM6LCCIUjcBSxgNN8ZAx6udmU6H2KsSKRNhz66nQbm03BOu75xNlAQY4QweSWVjrxj7ZAP54HTteBLNsoZCzfW6wPwZCmXbctbxW0K2Ivzniouk7mZAGecRx3zAv8yWA5ZAe1qZCPZBQo9fQEpNsvdRvNXZBfLNDcj8Ue7ZAfjp16Yx6PiDSO2OFq7HOky7M3NSeKxo2gHgZDZD";
 const VERIFY_TOKEN = "12345";
 const MY_PAGE_ID = "1308276022380261"; 
 
-// === ตั้งค่าเชื่อมต่อ Supabase ===
-const SUPABASE_URL = "https://ngnwpztrakicjtlwpfth.supabase.co";
-const SUPABASE_ANON_KEY = "sb_publishable_DFlK6z20r5G42q0ig6bgmw_3UTjpTrq";
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+// ฐานข้อมูลจำลองในหน่วยความจำชั่วคราว (หรือต่อยอดเก็บไฟล์)
+let memoryDb = {};
 
 // 1. ส่วนสำหรับ Facebook ยืนยันตัวตน Webhook (Verification)
 app.get('/webhook', (req, res) => {
@@ -67,35 +64,17 @@ app.post('/webhook', async (req, res) => {
     }
 });
 
-async function getDayData(chatId, dateStr) {
-    const { data, error } = await supabase
-        .from('user_logs')
-        .select('*')
-        .eq('sender_id', chatId)
-        .eq('date_str', dateStr)
-        .single();
-
-    if (error || !data) {
+function getDayData(chatId, dateStr) {
+    if (!memoryDb[chatId]) memoryDb[chatId] = {};
+    if (!memoryDb[chatId][dateStr]) {
         return { total: 0, items: [] };
     }
-    return { total: data.total, items: data.items };
+    return memoryDb[chatId][dateStr];
 }
 
-async function saveDayData(chatId, dateStr, dayData) {
-    const { error } = await supabase
-        .from('user_logs')
-        .upsert({ 
-            sender_id: chatId, 
-            date_str: dateStr, 
-            total: dayData.total, 
-            items: dayData.items 
-        }, { 
-            onConflict: 'sender_id,date_str' 
-        });
-
-    if (error) {
-        console.error("❌ บันทึกลง Supabase ไม่สำเร็จ:", error.message);
-    }
+function saveDayData(chatId, dateStr, dayData) {
+    if (!memoryDb[chatId]) memoryDb[chatId] = {};
+    memoryDb[chatId][dateStr] = dayData;
 }
 
 function parseDateInput(inputStr) {
@@ -125,7 +104,7 @@ async function processSumMessage(chatId, messageText, senderId) {
 
     // 2. CLEAR ทั้งหมด
     if (lowerText === 'clear') {
-        await supabase.from('user_logs').delete().eq('sender_id', chatId);
+        if (memoryDb[chatId]) delete memoryDb[chatId];
         sendMessengerMessage(senderId, `🗑️ รีเซ็ตยอดและรายการทั้งหมดเรียบร้อย | ยอดรวม: 0`);
         return;
     }
@@ -133,31 +112,32 @@ async function processSumMessage(chatId, messageText, senderId) {
     // 3. CLEAR เฉพาะวัน
     if (lowerText.startsWith('clear ')) {
         const targetDate = parseDateInput(messageText.substring(6).trim());
-        await supabase.from('user_logs').delete().eq('sender_id', chatId).eq('date_str', targetDate);
+        if (memoryDb[chatId] && memoryDb[chatId][targetDate]) {
+            delete memoryDb[chatId][targetDate];
+        }
         sendMessengerMessage(senderId, `🗑️ ลบข้อมูลของวันที่ ${targetDate} เรียบร้อยแล้ว`);
         return;
     }
 
-    // 4. SUM ทั้งหมด (แก้ไขให้สมบูรณ์แล้ว)
-    if (lowerText === 'list') {
-        const { data: allRows } = await supabase.from('user_logs').select('*').eq('sender_id', chatId).order('date_str', { ascending: true });
-        if (!allRows || allRows.length === 0) {
+    // 4. SUM ทั้งหมด (ดูรายการทุกวัน)
+    if (lowerText === 'list' || lowerText === 'sum' || lowerText === 'ยอดรวมทั้งหมด') {
+        if (!memoryDb[chatId] || Object.keys(memoryDb[chatId]).length === 0) {
             sendMessengerMessage(senderId, `📅 ยังไม่มีรายการค้างในระบบ`);
             return;
         }
 
         let grandTotal = 0;
         let replyText = `📊 สรุปยอดค้างทั้งหมดทุกวัน:\n`;
-        allRows.forEach(row => {
-            if (row.items && row.items.length > 0) {
-                replyText += `\n📅 [${row.date_str}] รายการ:\n`;
-                row.items.forEach((item, idx) => {
+        for (const [dateStr, dayData] of Object.entries(memoryDb[chatId])) {
+            if (dayData.items && dayData.items.length > 0) {
+                replyText += `\n📅 [${dateStr}] รายการ:\n`;
+                dayData.items.forEach((item, idx) => {
                     replyText += `  ${idx + 1}. [${item.time}] +${item.amount}\n`;
                 });
-                replyText += `  ยอดรวมวันนึ้: ${row.total}\n`;
-                grandTotal += row.total;
+                replyText += `  ยอดรวมวันนึ้: ${dayData.total}\n`;
+                grandTotal += dayData.total;
             }
-        });
+        }
         replyText += `-------------------\n💰 ยอดรวมสุทธิทุกวัน: ${grandTotal}`;
         sendMessengerMessage(senderId, replyText);
         return;
@@ -174,18 +154,18 @@ async function processSumMessage(chatId, messageText, senderId) {
     if (messageText.startsWith('..')) {
         const addedNum = parseFloat(messageText.substring(2).trim());
         if (!isNaN(addedNum)) {
-            let dayData = await getDayData(chatId, todayStr);
+            let dayData = getDayData(chatId, todayStr);
             dayData.items.push({ time: timeStr, amount: addedNum });
             dayData.total = dayData.items.reduce((sum, item) => sum + item.amount, 0);
 
-            await saveDayData(chatId, todayStr, dayData);
+            saveDayData(chatId, todayStr, dayData);
             sendSpecificDateSummary(chatId, todayStr, senderId);
         }
     }
 }
 
-async function sendSpecificDateSummary(chatId, dateStr, senderId) {
-    const dayData = await getDayData(chatId, dateStr);
+function sendSpecificDateSummary(chatId, dateStr, senderId) {
+    const dayData = getDayData(chatId, dateStr);
     let replyText = `📅 [${dateStr}] รายการประจำวัน:\n`;
 
     if (dayData.items.length === 0) {
