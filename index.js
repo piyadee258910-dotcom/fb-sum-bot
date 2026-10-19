@@ -43,7 +43,6 @@ app.post('/webhook', async (req, res) => {
                     if (!senderId) continue;
                     if (senderId === recipientId) continue;
 
-                    // ใช้ senderId เป็นตัวระบุตัวตนลูกค้าที่ทักเข้ามาจริง ๆ
                     let targetChatId = senderId; 
 
                     if (webhookEvent.message && webhookEvent.message.text) {
@@ -139,8 +138,8 @@ async function processSumMessage(chatId, messageText, senderId) {
         return;
     }
 
-    // 4. SUM ทั้งหมด
-    if (lowerText === 'sum' || lowerText === 'สรุป' || lowerText === 'list') {
+    // 4. SUM ทั้งหมด (แก้ไขให้สมบูรณ์แล้ว)
+    if (lowerText === 'list') {
         const { data: allRows } = await supabase.from('user_logs').select('*').eq('sender_id', chatId).order('date_str', { ascending: true });
         if (!allRows || allRows.length === 0) {
             sendMessengerMessage(senderId, `📅 ยังไม่มีรายการค้างในระบบ`);
@@ -164,9 +163,8 @@ async function processSumMessage(chatId, messageText, senderId) {
         return;
     }
 
-    // 5. SUM เฉพาะวัน
+    // 5. SUM เฉพาะวัน หรือพิมพ์ "สรุป"
     if (lowerText.startsWith('sum ') || lowerText === 'สรุป') {
-        // ถ้าพิมพ์แค่ "สรุป" เฉยๆ ให้ดูยอดของวันนี้
         const targetDate = (messageText === 'สรุป') ? todayStr : parseDateInput(messageText.split(/\s+/)[1]);
         sendSpecificDateSummary(chatId, targetDate, senderId);
         return;
@@ -229,7 +227,7 @@ function sendMessengerMessage(recipientId, text) {
         recipient: { id: recipientId },
         message: { text: text }
     })
-    .catch(err => console.error('Errorส่งข้อความผิดพลาด:', err.response ? err.response.data : err.message));
+    .catch(err => console.error('Error ส่งข้อความผิดพลาด:', err.response ? err.response.data : err.message));
 }
 
 const PORT = process.env.PORT || 3000;
