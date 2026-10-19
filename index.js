@@ -12,7 +12,7 @@ const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 const userTotals = {};
 
 // 1. ส่วนสำหรับ Facebook ยืนยันตัวตน Webhook (Verification)
-app.get('/sum', (req, res) => {
+app.get('/webhook', (req, res) => {
     const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];
     const challenge = req.query['hub.challenge'];
@@ -25,7 +25,7 @@ app.get('/sum', (req, res) => {
 });
 
 // 2. ส่วนสำหรับรับข้อความแชทเพื่อบวกเลข
-app.post('/sum', (req, res) => {
+app.post('/webhook', (req, res) => {
     const body = req.body;
 
     if (body.object === 'page') {
