@@ -172,7 +172,7 @@ async function processSumMessage(chatId, messageText, senderId) {
         return;
     }
 
-    // 6. รองรับพิมพ์ยอดเงิน (เช่น .254)
+    // 6. รองรับพิมพ์ยอดเงิน (เช่น .254) -> ดักจับหลังจุดแล้วนำมารวมทันที
     if (messageText.startsWith('.')) {
         const addedNum = parseFloat(messageText.substring(1).trim());
         if (!isNaN(addedNum)) {
