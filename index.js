@@ -49,10 +49,18 @@ app.post('/webhook', async (req, res) => {
 
                         console.log(`==> ได้รับข้อความจาก sender: ${senderId}, recipient: ${recipientId}, pageId: ${pageId}`);
                         
-                        // 🔍 กำหนดให้ระบุตัวตนแชท: ถ้าเพจส่งออกไปหากลูกค้า ให้ใช้ recipientId เป็นหลักในการเก็บข้อมูลแชทนั้นๆ
-                        // แต่ถ้าลูกค้าส่งเข้ามา ให้ใช้ senderId
-                        const targetChatId = (senderId === MY_PAGE_ID || senderId === pageId) ? recipientId : senderId;
+                        // 🔍 [จุดที่แก้ไข]: 
+                        // - ถ้า senderId ไม่ใช่เพจ (แปลว่าลูกค้าพิมพ์มา) ให้ข้าม (ไม่รับคำสั่งจากลูกค้า)
+                        const isFromPage = (senderId === pageId || senderId === MY_PAGE_ID);
+                        if (!isFromPage) {
+                            console.log(`==> ข้ามข้อความจากลูกค้า (${senderId}): ${messageText}`);
+                            continue;
+                        }
 
+                        // ถ้าแอดมินพิมพ์ส่งในแชทไหน แชทนั้น (recipientId) คือเป้าหมายที่จะบันทึกยอดและส่งข้อความตอบกลับ
+                        const targetChatId = recipientId;
+
+                        console.log(`==> ได้รับคำสั่งจากแอดมิน ส่งไปยังแชทลูกค้า: ${targetChatId} -> ข้อความ: ${messageText}`);
                         await processSumMessage(targetChatId, messageText, targetChatId);
                     }
                 }
