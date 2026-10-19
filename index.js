@@ -5,9 +5,9 @@ const axios = require('axios');
 const app = express();
 app.use(bodyParser.json());
 
-// รหัส Token ของ Facebook Page และ Verify Token
-const PAGE_ACCESS_TOKEN = 'YOUR_PAGE_ACCESS_TOKEN_HERE';
-const VERIFY_TOKEN = 'my_secure_verify_token_123';
+// ดึงค่า Token จากตัวแปรแวดล้อมบน Render
+const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
+const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 
 const userTotals = {};
 
