@@ -9,8 +9,6 @@ app.use(bodyParser.json());
 // === Token และข้อมูลเพจของคุณ ===
 const PAGE_ACCESS_TOKEN = "EAAM6LCCIUjcBSxgNN8ZAx6udmU6H2KsSKRNhz66nQbm03BOu75xNlAQY4QweSWVjrxj7ZAP54HTteBLNsoZCzfW6wPwZCmXbctbxW0K2Ivzniouk7mZAGecRx3zAv8yWA5ZAe1qZCPZBQo9fQEpNsvdRvNXZBfLNDcj8Ue7ZAfjp16Yx6PiDSO2OFq7HOky7M3NSeKxo2gHgZDZD";
 const VERIFY_TOKEN = "12345";
-
-// 👉 ระบุ Page ID ของเพจคุณ เพื่อให้บอทรับคำสั่งเฉพาะฝั่งเพจ (แอดมิน) เท่านั้น
 const MY_PAGE_ID = "1308276022380261"; 
 
 // === ตั้งค่าเชื่อมต่อ Supabase ===
@@ -49,14 +47,12 @@ app.post('/webhook', async (req, res) => {
                         
                         if (senderId === recipientId) continue;
 
-                        // 🛑 กรองคำสั่ง: อนุญาตเฉพาะแอดมินเพจเท่านั้น
-                        if (senderId !== pageId && senderId !== MY_PAGE_ID) {
-                            console.log(`==> ข้ามข้อความจากลูกค้าทั่วไป (${senderId}): ${messageText}`);
-                            continue;
-                        }
-
-                        console.log(`==> ได้รับคำสั่งจากแอดมินเพจ (${senderId}): ${messageText}`);
-                        await processSumMessage(pageId, messageText);
+                        // ตรวจสอบว่าเป็นข้อความที่ส่งออกจากฝั่งเพจ (ไม่ว่าจะเป็นตัวเพจส่งเอง หรือแอดมินใช้เพจพิมพ์คุยกับลูกค้าในแชท)
+                        // โดยเช็กว่า recipientId ตรงกับ pageId หรือ senderId เป็นแอดมินในบทสนทนานี้
+                        console.log(`==> ได้รับข้อความจาก sender: ${senderId}, recipient: ${recipientId}, pageId: ${pageId}`);
+                        
+                        // ให้ใช้ pageId หรือ MY_PAGE_ID เป็นหลักในการเก็บฐานข้อมูลยอดรวมของร้าน เพื่อให้ทุกแอดมินพิมพ์สะสมยอดเข้ากองกลางเดียวกันได้
+                        await processSumMessage(MY_PAGE_ID, messageText, recipientId);
                     }
                 }
             }
@@ -119,7 +115,7 @@ function parseDateInput(inputStr) {
 }
 
 // ฟังก์ชันประมวลผลข้อความหลัก
-async function processSumMessage(adminId, messageText) {
+async function processSumMessage(adminId, messageText, targetChatId) {
     const lowerText = messageText.toLowerCase();
     const now = new Date();
     const todayStr = now.toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
@@ -128,7 +124,7 @@ async function processSumMessage(adminId, messageText) {
     // --- CLEAR ทั้งหมด ---
     if (lowerText === 'clear') {
         await supabase.from('user_logs').delete().eq('sender_id', adminId);
-        sendMessengerMessage(adminId, `🗑️ รีเซ็ตยอดและรายการทั้งหมดทุกวันเรียบร้อย | ยอดรวม: 0`);
+        sendMessengerMessage(targetChatId, `🗑️ รีเซ็ตยอดและรายการทั้งหมดทุกวันเรียบร้อย | ยอดรวม: 0`);
         return;
     }
 
@@ -136,7 +132,7 @@ async function processSumMessage(adminId, messageText) {
     if (lowerText.startsWith('clear ')) {
         const targetDate = parseDateInput(messageText.substring(6).trim());
         await supabase.from('user_logs').delete().eq('sender_id', adminId).eq('date_str', targetDate);
-        sendMessengerMessage(adminId, `🗑️ ลบข้อมูลของวันที่ ${targetDate} เรียบร้อยแล้ว`);
+        sendMessengerMessage(targetChatId, `🗑️ ลบข้อมูลของวันที่ ${targetDate} เรียบร้อยแล้ว`);
         return;
     }
 
@@ -156,10 +152,10 @@ async function processSumMessage(adminId, messageText) {
                 dayData.total = dayData.items.reduce((sum, item) => sum + item.amount, 0);
 
                 await saveDayData(adminId, targetDate, dayData);
-                sendMessengerMessage(adminId, `✏️ แก้ไขรายการที่ ${parts[2]} วันที่ ${targetDate} เป็น +${newAmount} สำเร็จ!`);
-                sendSpecificDateSummary(adminId, targetDate);
+                sendMessengerMessage(targetChatId, `✏️ แก้ไขรายการที่ ${parts[2]} วันที่ ${targetDate} เป็น +${newAmount} สำเร็จ!`);
+                sendSpecificDateSummary(adminId, targetDate, targetChatId);
             } else {
-                sendMessengerMessage(adminId, `❌ แก้ไขไม่สำเร็จ: ไม่พบวันที่หรือลำดับรายการที่ระบุ`);
+                sendMessengerMessage(targetChatId, `❌ แก้ไขไม่สำเร็จ: ไม่พบวันที่หรือลำดับรายการที่ระบุ`);
             }
         }
         return;
@@ -169,7 +165,7 @@ async function processSumMessage(adminId, messageText) {
     if (lowerText === 'sum' || lowerText === 'สรุป' || lowerText === 'list') {
         const { data: allRows } = await supabase.from('user_logs').select('*').eq('sender_id', adminId).order('date_str', { ascending: true });
         if (!allRows || allRows.length === 0) {
-            sendMessengerMessage(adminId, `📅 ยังไม่มีรายการค้างในระบบ`);
+            sendMessengerMessage(targetChatId, `📅 ยังไม่มีรายการค้างในระบบ`);
             return;
         }
 
@@ -186,14 +182,14 @@ async function processSumMessage(adminId, messageText) {
             }
         });
         replyText += `-------------------\n💰 ยอดรวมสุทธิทุกวัน: ${grandTotal}`;
-        sendMessengerMessage(adminId, replyText);
+        sendMessengerMessage(targetChatId, replyText);
         return;
     }
 
     // --- SUM เฉพาะวัน ---
     if (lowerText.startsWith('sum ') || lowerText.startsWith('สรุป ')) {
         const targetDate = parseDateInput(messageText.split(/\s+/)[1]);
-        sendSpecificDateSummary(adminId, targetDate);
+        sendSpecificDateSummary(adminId, targetDate, targetChatId);
         return;
     }
 
@@ -206,12 +202,12 @@ async function processSumMessage(adminId, messageText) {
             dayData.total = dayData.items.reduce((sum, item) => sum + item.amount, 0);
 
             await saveDayData(adminId, todayStr, dayData);
-            sendSpecificDateSummary(adminId, todayStr);
+            sendSpecificDateSummary(adminId, todayStr, targetChatId);
         }
     }
 }
 
-async function sendSpecificDateSummary(adminId, dateStr) {
+async function sendSpecificDateSummary(adminId, dateStr, targetChatId) {
     const dayData = await getDayData(adminId, dateStr);
     let replyText = `📅 [${dateStr}] รายการประจำวัน:\n`;
 
@@ -223,11 +219,11 @@ async function sendSpecificDateSummary(adminId, dateStr) {
         });
         replyText += `-------------------\n💰 ยอดรวมของวัน: ${dayData.total}`;
     }
-    sendMessengerMessage(adminId, replyText);
+    sendMessengerMessage(targetChatId, replyText);
 }
 
 function sendMessengerMessage(recipientId, text) {
-    if (recipientId === "12334" || recipientId.length < 5) return;
+    if (!recipientId || recipientId === "12334" || recipientId.length < 5) return;
 
     axios.post(`https://graph.facebook.com/v18.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`, {
         recipient: { id: recipientId },
