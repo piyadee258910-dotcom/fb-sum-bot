@@ -35,8 +35,6 @@ app.post('/webhook', async (req, res) => {
 
     if (body.object === 'page') {
         for (const entry of body.entry) {
-            const pageId = entry.id;
-
             if (entry.messaging) {
                 for (const webhookEvent of entry.messaging) {
                     const senderId = webhookEvent.sender ? webhookEvent.sender.id : null;
@@ -45,18 +43,19 @@ app.post('/webhook', async (req, res) => {
                     if (!senderId) continue;
                     if (senderId === recipientId) continue;
 
-                    let targetChatId = recipientId; 
+                    // 💡 ใช้ senderId เป็น targetChatId เพื่อให้เก็บบันทึกแยกตามลูกค้าแต่ละคนจริง ๆ
+                    let targetChatId = senderId; 
 
                     if (webhookEvent.message && webhookEvent.message.text) {
                         const messageText = webhookEvent.message.text.trim();
-                        console.log(`==> ได้รับข้อความ | Target Chat/Group ID: ${targetChatId} | Sender: ${senderId} | ข้อความ: ${messageText}`);
+                        console.log(`==> ได้รับข้อความ | Sender ID: ${targetChatId} | ข้อความ: ${messageText}`);
                         
                         await processSumMessage(targetChatId, messageText, senderId);
                     }
 
                     if (webhookEvent.postback && webhookEvent.postback.payload) {
                         const payload = webhookEvent.postback.payload.trim();
-                        console.log(`==> ได้รับปุ่มกด (Postback) | Target Chat/Group ID: ${targetChatId} | Sender: ${senderId} | Payload: ${payload}`);
+                        console.log(`==> ได้รับปุ่มกด (Postback) | Sender ID: ${targetChatId} | Payload: ${payload}`);
 
                         await processSumMessage(targetChatId, payload, senderId);
                     }
