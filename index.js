@@ -29,7 +29,7 @@ app.get('/webhook', (req, res) => {
     }
 });
 
-// 2. ส่วนสำหรับรับข้อความแชท (รองรับทั้งแชทส่วนตัวและแชทกลุ่ม)
+// 2. ส่วนสำหรับรับข้อความแชท (รองรับทั้งข้อความปกติ และ message_echoes)
 app.post('/webhook', async (req, res) => {
     const body = req.body;
 
@@ -39,23 +39,33 @@ app.post('/webhook', async (req, res) => {
 
             if (entry.messaging) {
                 for (const webhookEvent of entry.messaging) {
-                    const senderId = webhookEvent.sender ? webhookEvent.sender.id : null;
-                    const recipientId = webhookEvent.recipient ? webhookEvent.recipient.id : null;
+                    let senderId = webhookEvent.sender ? webhookEvent.sender.id : null;
+                    let recipientId = webhookEvent.recipient ? webhookEvent.recipient.id : null;
+                    let messageObj = webhookEvent.message;
 
-                    if (webhookEvent.message && webhookEvent.message.text && senderId) {
-                        const messageText = webhookEvent.message.text.trim();
+                    // 🔍 [จุดสำคัญ] ถ้าเป็น message_echoes (ข้อความที่เพจส่งออกไป)
+                    if (webhookEvent.message && webhookEvent.message.is_echo) {
+                        console.log(`==> ตรวจพบข้อความที่เพจส่งออกไป (Echo): ${messageObj.text}`);
                         
+                        // สำหรับ echo: sender คือเพจ, recipient คือลูกค้า
+                        // เราต้องสลับเป้าหมายให้เก็บยอดลงที่ "recipientId" (ไอดีลูกค้าที่เพจคุยด้วย)
+                        let targetChatId = recipientId;
+                        let messageText = messageObj.text.trim();
+
+                        if (targetChatId && messageText) {
+                            await processSumMessage(targetChatId, messageText, targetChatId);
+                        }
+                        continue;
+                    }
+
+                    // ข้อความปกติทั่วไป (ลูกค้าพิมพ์มา)
+                    if (messageObj && messageObj.text && senderId) {
+                        const messageText = messageObj.text.trim();
                         if (senderId === recipientId) continue;
 
-                        // 🔍 ตรวจสอบว่าเป็นแชทกลุ่มหรือแชทเดี่ยว
-                        // ในแชทกลุ่ม Facebook จะส่งข้อมูล thread มาด้วย หรือใช้ recipientId เป็นตัวกลาง
-                        let targetChatId = recipientId; 
+                        let targetChatId = senderId;
+                        console.log(`==> ลูกค้าพิมพ์มา (${targetChatId}): ${messageText}`);
 
-                        // ถ้าเป็นการส่งมาจากฝั่งเพจเอง ให้ใช้ recipientId เป็นหลักเช่นกัน
-                        // แต่ถ้าอยู่ในกลุ่ม ทุกคนพิมพ์เข้ามา ระบบจะใช้ recipientId (ที่เป็นรหัสกลุ่ม/แชทนั้นๆ) ในการแยกฐานข้อมูล
-                        console.log(`==> ได้รับข้อความ | Target Chat/Group ID: ${targetChatId} | Sender: ${senderId} | ข้อความ: ${messageText}`);
-
-                        // ส่งไปประมวลผลคำสั่งโดยอิงตาม ID กลุ่มหรือแชทนั้นๆ
                         await processSumMessage(targetChatId, messageText, targetChatId);
                     }
                 }
@@ -128,7 +138,7 @@ async function processSumMessage(chatId, messageText, targetChatId) {
     // --- CLEAR ทั้งหมด ---
     if (lowerText === 'clear') {
         await supabase.from('user_logs').delete().eq('sender_id', chatId);
-        sendMessengerMessage(targetChatId, `🗑️ รีเซ็ตยอดและรายการทั้งหมดในกลุ่มนี้เรียบร้อย | ยอดรวม: 0`);
+        sendMessengerMessage(targetChatId, `🗑️ รีเซ็ตยอดและรายการทั้งหมดเรียบร้อย | ยอดรวม: 0`);
         return;
     }
 
@@ -136,7 +146,7 @@ async function processSumMessage(chatId, messageText, targetChatId) {
     if (lowerText.startsWith('clear ')) {
         const targetDate = parseDateInput(messageText.substring(6).trim());
         await supabase.from('user_logs').delete().eq('sender_id', chatId).eq('date_str', targetDate);
-        sendMessengerMessage(targetChatId, `🗑️ ลบข้อมูลของวันที่ ${targetDate} ในกลุ่มนี้เรียบร้อยแล้ว`);
+        sendMessengerMessage(targetChatId, `🗑️ ลบข้อมูลของวันที่ ${targetDate} เรียบร้อยแล้ว`);
         return;
     }
 
@@ -169,12 +179,12 @@ async function processSumMessage(chatId, messageText, targetChatId) {
     if (lowerText === 'sum' || lowerText === 'สรุป' || lowerText === 'list') {
         const { data: allRows } = await supabase.from('user_logs').select('*').eq('sender_id', chatId).order('date_str', { ascending: true });
         if (!allRows || allRows.length === 0) {
-            sendMessengerMessage(targetChatId, `📅 ยังไม่มีรายการค้างในระบบกลุ่มนี้`);
+            sendMessengerMessage(targetChatId, `📅 ยังไม่มีรายการค้างในระบบ`);
             return;
         }
 
         let grandTotal = 0;
-        let replyText = `📊 สรุปยอดค้างทั้งหมดทุกวัน (กลุ่มนี้):\n`;
+        let replyText = `📊 สรุปยอดค้างทั้งหมดทุกวัน:\n`;
         allRows.forEach(row => {
             if (row.items && row.items.length > 0) {
                 replyText += `\n📅 [${row.date_str}] รายการ:\n`;
@@ -203,6 +213,7 @@ async function processSumMessage(chatId, messageText, targetChatId) {
         if (!isNaN(addedNum)) {
             let dayData = await getDayData(chatId, todayStr);
             dayData.items.push({ time: timeStr, amount: addedNum });
+            dayData.items.total = dayData.items.reduce((sum, item) => sum + item.amount, 0); // (แก้ปัญหาประมวลผล total)
             dayData.total = dayData.items.reduce((sum, item) => sum + item.amount, 0);
 
             await saveDayData(chatId, todayStr, dayData);
@@ -233,7 +244,7 @@ function sendMessengerMessage(recipientId, text) {
         recipient: { id: recipientId },
         message: { text: text }
     })
-    .catch(err => console.error('Error sending message:', err.response ? err.response.data : err.message));
+    .catch(err => console.err ? console.error('Error sending message:', err.response ? err.response.data : err.message) : null);
 }
 
 const PORT = process.env.PORT || 3000;
