@@ -87,25 +87,21 @@ async function getDayData(chatId, dateStr) {
     return { total: data.total, items: data.items };
 }
 
-// ฟังก์ชันบันทึกข้อมูลลง Supabase
+// ฟังก์ชันบันทึกข้อมูลลง Supabase (ใช้ upsert ป้องกันบันทึกไม่เข้า)
 async function saveDayData(chatId, dateStr, dayData) {
-    const { data } = await supabase
+    const { error } = await supabase
         .from('user_logs')
-        .select('id')
-        .eq('sender_id', chatId)
-        .eq('date_str', dateStr)
-        .single();
+        .upsert({ 
+            sender_id: chatId, 
+            date_str: dateStr, 
+            total: dayData.total, 
+            items: dayData.items 
+        }, { 
+            onConflict: 'sender_id,date_str' 
+        });
 
-    if (data) {
-        await supabase
-            .from('user_logs')
-            .update({ total: dayData.total, items: dayData.items })
-            .eq('sender_id', chatId)
-            .eq('date_str', dateStr);
-    } else {
-        await supabase
-            .from('user_logs')
-            .insert([{ sender_id: chatId, date_str: dateStr, total: dayData.total, items: dayData.items }]);
+    if (error) {
+        console.error("❌ บันทึกลง Supabase ไม่สำเร็จ:", error.message);
     }
 }
 
@@ -129,6 +125,12 @@ async function processSumMessage(chatId, messageText, senderId) {
     const now = new Date();
     const todayStr = now.toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
     const timeStr = now.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Bangkok' });
+
+    // --- ถ้าพิมพ์แค่จุด (.) ตัวเดียว ให้ส่งปุ่มเมนูโต้ตอบกลับไป ---
+    if (messageText === '.') {
+        sendInteractiveMenu(senderId);
+        return;
+    }
 
     // --- CLEAR ทั้งหมด ---
     if (lowerText === 'clear') {
@@ -177,7 +179,7 @@ async function processSumMessage(chatId, messageText, senderId) {
         return;
     }
 
-    // --- รองรับปุ่มกดส่งคำสั่งด่วน หรือพิมพ์ยอดเงิน (เช่น .254) ---
+    // --- รองรับพิมพ์ยอดเงิน (เช่น .254) ---
     if (messageText.startsWith('.')) {
         const addedNum = parseFloat(messageText.substring(1).trim());
         if (!isNaN(addedNum)) {
@@ -204,6 +206,40 @@ async function sendSpecificDateSummary(chatId, dateStr, senderId) {
         replyText += `-------------------\n💰 ยอดรวมของวัน: ${dayData.total}`;
     }
     sendMessengerMessage(senderId, replyText);
+}
+
+// ฟังก์ชันส่งการ์ดปุ่มเมนูแบบเลือกตอบ (Interactive Menu)
+function sendInteractiveMenu(recipientId) {
+    axios.post(`https://graph.facebook.com/v18.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`, {
+        recipient: { id: recipientId },
+        message: {
+            attachment: {
+                type: "template",
+                payload: {
+                    template_type: "button",
+                    text: "📌 กรุณาเลือกคำสั่งที่ต้องการทำต่อ:",
+                    buttons: [
+                        {
+                            type: "postback",
+                            title: "➕ เพิ่มยอดด่วน (.254)",
+                            payload: ".254"
+                        },
+                        {
+                            type: "postback",
+                            title: "📊 ดูสรุปยอดวันนี้",
+                            payload: "สรุป"
+                        },
+                        {
+                            type: "postback",
+                            title: "🗑️ ล้างข้อมูลวันนี้",
+                            payload: "clear"
+                        }
+                    ]
+                }
+            }
+        }
+    })
+    .catch(err => console.error('Error sending interactive menu:', err.response ? err.response.data : err.message));
 }
 
 function sendMessengerMessage(recipientId, text) {
