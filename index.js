@@ -9,7 +9,7 @@ app.use(bodyParser.json());
 const PAGE_ACCESS_TOKEN = "EAAM6LCCIUjcBSxgNN8ZAx6udmU6H2KsSKRNhz66nQbm03BOu75xNlAQY4QweSWVjrxj7ZAP54HTteBLNsoZCzfW6wPwZCmXbctbxW0K2Ivzniouk7mZAGecRx3zAv8yWA5ZAe1qZCPZBQo9fQEpNsvdRvNXZBfLNDcj8Ue7ZAfjp16Yx6PiDSO2OFq7HOky7M3NSeKxo2gHgZDZD";
 const VERIFY_TOKEN = "12345";
 
-// โครงสร้างเก็บข้อมูล: userLogs[senderId] = { "2026-10-19": { total: 83, items: [...] } }
+// โครงสร้างเก็บข้อมูล: userLogs[senderId] = { "2026-10-19": { total: 0, items: [...] } }
 const userLogs = {};
 
 // 1. ส่วนสำหรับ Facebook ยืนยันตัวตน Webhook (Verification)
@@ -113,30 +113,27 @@ function processSumMessage(senderId, messageText) {
         return;
     }
 
-    // --- 2. จัดการคำสั่ง EDIT (เช่น edit 19/10/2026 2 300) ---
+    // --- 2. จัดการคำสั่ง EDIT (รองรับทั้งตัวพิมพ์เล็กและใหญ่) ---
     if (lowerText.startsWith('edit ')) {
-        // แยกข้อความด้วยช่องว่าง: ["edit", "19/10/2026", "2", "300"]
         const parts = messageText.split(/\s+/);
         if (parts.length >= 4) {
             const targetDate = parseDateInput(parts[1]);
-            const indexNo = parseInt(parts[2]) - 1; // แปลงเป็น Index เริ่มที่ 0
+            const indexNo = parseInt(parts[2]) - 1; // ลำดับเริ่มที่ 0
             const newAmount = parseFloat(parts[3]);
 
             if (userLogs[senderId][targetDate] && userLogs[senderId][targetDate].items[indexNo] !== undefined && !isNaN(newAmount)) {
-                // แก้ไขจำนวนเงินและอัปเดตเวลาที่แก้ไข
                 userLogs[senderId][targetDate].items[indexNo].amount = newAmount;
                 userLogs[senderId][targetDate].items[indexNo].time = timeStr;
 
-                // คำนวณยอดรวมใหม่ของวันนั้น
                 recalculateDayTotal(userLogs[senderId][targetDate]);
 
                 sendMessengerMessage(senderId, `✏️ แก้ไขรายการที่ ${parts[2]} ของวันที่ ${targetDate} เป็น +${newAmount} สำเร็จ!`);
                 sendSpecificDateSummary(senderId, targetDate);
             } else {
-                sendMessengerMessage(senderId, `❌ แก้ไขไม่สำเร็จ: รูปแบบคำสั่งไม่ถูกต้อง หรือไม่พบวันที่/ลำดับรายการที่ระบุ`);
+                sendMessengerMessage(senderId, `❌ แก้ไขไม่สำเร็จ: ไม่พบวันที่หรือลำดับรายการที่ ${parts[2]} ในระบบ`);
             }
         } else {
-            sendMessengerMessage(senderId, `⚠️ รูปแบบคำสั่ง Edit ไม่ถูกต้อง\nวิธีใช้: edit [วันที่] [ลำดับ] [ยอดใหม่]\nตัวอย่าง: edit 19/10/2026 2 300`);
+            sendMessengerMessage(senderId, `⚠️ รูปแบบคำสั่ง Edit ไม่ถูกต้อง\nวิธีใช้: edit [วันที่] [ลำดับ] [ยอดใหม่]\nตัวอย่าง: edit 19/10/2026 2 200`);
         }
         return;
     }
@@ -153,7 +150,7 @@ function processSumMessage(senderId, messageText) {
         return;
     }
 
-    // --- 4. บวกลบเลขปกติ (ขึ้นต้นด้วยจุด) บันทึกลง "วันนี้" ---
+    // --- 4. บวกลบเลขปกติ (ขึ้นต้นด้วยจุด) ---
     if (messageText.startsWith('.')) {
         const numStr = messageText.substring(1).trim();
         const addedNum = parseFloat(numStr);
@@ -171,7 +168,7 @@ function processSumMessage(senderId, messageText) {
     }
 }
 
-// ฟังก์ชันแสดงสรุปยอดรวมทั้งหมดทุกวันที่ค้างอยู่
+// ฟังก์ชันแสดงสรุปยอดรวมทั้งหมดทุกวัน
 function sendTotalSummary(senderId) {
     const allDates = Object.keys(userLogs[senderId]);
     if (allDates.length === 0) {
@@ -191,6 +188,7 @@ function sendTotalSummary(senderId) {
                 replyText += `  ${idx + 1}. [${item.time}] +${item.amount}\n`;
             });
             replyText += `  ยอดรวมวันนึ้: ${dayData.total}\n`;
+            grandTestTotal = dayData.total;
             grandTotal += dayData.total;
         }
     });
