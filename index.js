@@ -43,7 +43,7 @@ app.post('/webhook', async (req, res) => {
                     if (!senderId) continue;
                     if (senderId === recipientId) continue;
 
-                    // 💡 ใช้ senderId เป็น targetChatId เพื่อให้เก็บบันทึกแยกตามลูกค้าแต่ละคนจริง ๆ
+                    // ใช้ senderId เป็นตัวระบุตัวตนลูกค้าที่ทักเข้ามาจริง ๆ
                     let targetChatId = senderId; 
 
                     if (webhookEvent.message && webhookEvent.message.text) {
@@ -118,7 +118,7 @@ async function processSumMessage(chatId, messageText, senderId) {
     const todayStr = now.toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
     const timeStr = now.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Bangkok' });
 
-    // 1. ถ้าพิมพ์จุด (.) ตัวเดียว ให้เด้งปุ่มเมนู
+    // 1. ถ้าพิมพ์จุด (.) ตัวเดียว ให้เด้งปุ่มเมนูโต้ตอบ
     if (messageText === '.') {
         sendInteractiveMenu(senderId);
         return;
@@ -165,13 +165,14 @@ async function processSumMessage(chatId, messageText, senderId) {
     }
 
     // 5. SUM เฉพาะวัน
-    if (lowerText.startsWith('sum ') || lowerText.startsWith('สรุป ')) {
-        const targetDate = parseDateInput(messageText.split(/\s+/)[1]);
+    if (lowerText.startsWith('sum ') || lowerText === 'สรุป') {
+        // ถ้าพิมพ์แค่ "สรุป" เฉยๆ ให้ดูยอดของวันนี้
+        const targetDate = (messageText === 'สรุป') ? todayStr : parseDateInput(messageText.split(/\s+/)[1]);
         sendSpecificDateSummary(chatId, targetDate, senderId);
         return;
     }
 
-    // 6. รองรับพิมพ์ยอดเงินขึ้นต้นด้วยจุดสองจุด (เช่น ..254) -> ตัด ".." ออกแล้วนำตัวเลขข้างหลังมารวมทันที
+    // 6. รองรับพิมพ์ยอดเงินขึ้นต้นด้วยจุดสองจุด (เช่น ..254)
     if (messageText.startsWith('..')) {
         const addedNum = parseFloat(messageText.substring(2).trim());
         if (!isNaN(addedNum)) {
@@ -228,7 +229,7 @@ function sendMessengerMessage(recipientId, text) {
         recipient: { id: recipientId },
         message: { text: text }
     })
-    .catch(err => console.error('Error sending message:', err.response ? err.response.data : err.message));
+    .catch(err => console.error('Errorส่งข้อความผิดพลาด:', err.response ? err.response.data : err.message));
 }
 
 const PORT = process.env.PORT || 3000;
