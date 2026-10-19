@@ -49,8 +49,11 @@ app.post('/webhook', async (req, res) => {
 
                         console.log(`==> ได้รับข้อความจาก sender: ${senderId}, recipient: ${recipientId}, pageId: ${pageId}`);
                         
-                        // ใช้ MY_PAGE_ID เป็นฐานข้อมูลกลาง และส่ง senderId กลับไปหาคนที่พิมพ์
-                        await processSumMessage(MY_PAGE_ID, messageText, senderId);
+                        // 🔍 กำหนดให้ระบุตัวตนแชท: ถ้าเพจส่งออกไปหากลูกค้า ให้ใช้ recipientId เป็นหลักในการเก็บข้อมูลแชทนั้นๆ
+                        // แต่ถ้าลูกค้าส่งเข้ามา ให้ใช้ senderId
+                        const targetChatId = (senderId === MY_PAGE_ID || senderId === pageId) ? recipientId : senderId;
+
+                        await processSumMessage(targetChatId, messageText, targetChatId);
                     }
                 }
             }
@@ -62,11 +65,11 @@ app.post('/webhook', async (req, res) => {
 });
 
 // ฟังก์ชันดึงข้อมูลจาก Supabase
-async function getDayData(adminId, dateStr) {
+async function getDayData(chatId, dateStr) {
     const { data, error } = await supabase
         .from('user_logs')
         .select('*')
-        .eq('sender_id', adminId)
+        .eq('sender_id', chatId)
         .eq('date_str', dateStr)
         .single();
 
@@ -77,11 +80,11 @@ async function getDayData(adminId, dateStr) {
 }
 
 // ฟังก์ชันบันทึกข้อมูลลง Supabase
-async function saveDayData(adminId, dateStr, dayData) {
+async function saveDayData(chatId, dateStr, dayData) {
     const { data } = await supabase
         .from('user_logs')
         .select('id')
-        .eq('sender_id', adminId)
+        .eq('sender_id', chatId)
         .eq('date_str', dateStr)
         .single();
 
@@ -89,12 +92,12 @@ async function saveDayData(adminId, dateStr, dayData) {
         await supabase
             .from('user_logs')
             .update({ total: dayData.total, items: dayData.items })
-            .eq('sender_id', adminId)
+            .eq('sender_id', chatId)
             .eq('date_str', dateStr);
     } else {
         await supabase
             .from('user_logs')
-            .insert([{ sender_id: adminId, date_str: dateStr, total: dayData.total, items: dayData.items }]);
+            .insert([{ sender_id: chatId, date_str: dateStr, total: dayData.total, items: dayData.items }]);
     }
 }
 
@@ -113,7 +116,7 @@ function parseDateInput(inputStr) {
 }
 
 // ฟังก์ชันประมวลผลข้อความหลัก
-async function processSumMessage(adminId, messageText, targetChatId) {
+async function processSumMessage(chatId, messageText, targetChatId) {
     const lowerText = messageText.toLowerCase();
     const now = new Date();
     const todayStr = now.toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
@@ -121,7 +124,7 @@ async function processSumMessage(adminId, messageText, targetChatId) {
 
     // --- CLEAR ทั้งหมด ---
     if (lowerText === 'clear') {
-        await supabase.from('user_logs').delete().eq('sender_id', adminId);
+        await supabase.from('user_logs').delete().eq('sender_id', chatId);
         sendMessengerMessage(targetChatId, `🗑️ รีเซ็ตยอดและรายการทั้งหมดทุกวันเรียบร้อย | ยอดรวม: 0`);
         return;
     }
@@ -129,7 +132,7 @@ async function processSumMessage(adminId, messageText, targetChatId) {
     // --- CLEAR เฉพาะวัน ---
     if (lowerText.startsWith('clear ')) {
         const targetDate = parseDateInput(messageText.substring(6).trim());
-        await supabase.from('user_logs').delete().eq('sender_id', adminId).eq('date_str', targetDate);
+        await supabase.from('user_logs').delete().eq('sender_id', chatId).eq('date_str', targetDate);
         sendMessengerMessage(targetChatId, `🗑️ ลบข้อมูลของวันที่ ${targetDate} เรียบร้อยแล้ว`);
         return;
     }
@@ -142,16 +145,16 @@ async function processSumMessage(adminId, messageText, targetChatId) {
             const indexNo = parseInt(parts[2]) - 1;
             const newAmount = parseFloat(parts[3]);
 
-            let dayData = await getDayData(adminId, targetDate);
+            let dayData = await getDayData(chatId, targetDate);
             if (dayData.items[indexNo] !== undefined && !isNaN(newAmount)) {
                 dayData.items[indexNo].amount = newAmount;
                 dayData.items[indexNo].time = timeStr;
 
                 dayData.total = dayData.items.reduce((sum, item) => sum + item.amount, 0);
 
-                await saveDayData(adminId, targetDate, dayData);
+                await saveDayData(chatId, targetDate, dayData);
                 sendMessengerMessage(targetChatId, `✏️ แก้ไขรายการที่ ${parts[2]} วันที่ ${targetDate} เป็น +${newAmount} สำเร็จ!`);
-                sendSpecificDateSummary(adminId, targetDate, targetChatId);
+                sendSpecificDateSummary(chatId, targetDate, targetChatId);
             } else {
                 sendMessengerMessage(targetChatId, `❌ แก้ไขไม่สำเร็จ: ไม่พบวันที่หรือลำดับรายการที่ระบุ`);
             }
@@ -161,7 +164,7 @@ async function processSumMessage(adminId, messageText, targetChatId) {
 
     // --- SUM ทั้งหมด ---
     if (lowerText === 'sum' || lowerText === 'สรุป' || lowerText === 'list') {
-        const { data: allRows } = await supabase.from('user_logs').select('*').eq('sender_id', adminId).order('date_str', { ascending: true });
+        const { data: allRows } = await supabase.from('user_logs').select('*').eq('sender_id', chatId).order('date_str', { ascending: true });
         if (!allRows || allRows.length === 0) {
             sendMessengerMessage(targetChatId, `📅 ยังไม่มีรายการค้างในระบบ`);
             return;
@@ -187,7 +190,7 @@ async function processSumMessage(adminId, messageText, targetChatId) {
     // --- SUM เฉพาะวัน ---
     if (lowerText.startsWith('sum ') || lowerText.startsWith('สรุป ')) {
         const targetDate = parseDateInput(messageText.split(/\s+/)[1]);
-        sendSpecificDateSummary(adminId, targetDate, targetChatId);
+        sendSpecificDateSummary(chatId, targetDate, targetChatId);
         return;
     }
 
@@ -195,18 +198,18 @@ async function processSumMessage(adminId, messageText, targetChatId) {
     if (messageText.startsWith('.')) {
         const addedNum = parseFloat(messageText.substring(1).trim());
         if (!isNaN(addedNum)) {
-            let dayData = await getDayData(adminId, todayStr);
+            let dayData = await getDayData(chatId, todayStr);
             dayData.items.push({ time: timeStr, amount: addedNum });
             dayData.total = dayData.items.reduce((sum, item) => sum + item.amount, 0);
 
-            await saveDayData(adminId, todayStr, dayData);
-            sendSpecificDateSummary(adminId, todayStr, targetChatId);
+            await saveDayData(chatId, todayStr, dayData);
+            sendSpecificDateSummary(chatId, todayStr, targetChatId);
         }
     }
 }
 
-async function sendSpecificDateSummary(adminId, dateStr, targetChatId) {
-    const dayData = await getDayData(adminId, dateStr);
+async function sendSpecificDateSummary(chatId, dateStr, targetChatId) {
+    const dayData = await getDayData(chatId, dateStr);
     let replyText = `📅 [${dateStr}] รายการประจำวัน:\n`;
 
     if (dayData.items.length === 0) {
