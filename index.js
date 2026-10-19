@@ -47,11 +47,9 @@ app.post('/webhook', async (req, res) => {
                         
                         if (senderId === recipientId) continue;
 
-                        // ตรวจสอบว่าเป็นข้อความที่ส่งออกจากฝั่งเพจ (ไม่ว่าจะเป็นตัวเพจส่งเอง หรือแอดมินใช้เพจพิมพ์คุยกับลูกค้าในแชท)
-                        // โดยเช็กว่า recipientId ตรงกับ pageId หรือ senderId เป็นแอดมินในบทสนทนานี้
                         console.log(`==> ได้รับข้อความจาก sender: ${senderId}, recipient: ${recipientId}, pageId: ${pageId}`);
                         
-                        // ให้ใช้ pageId หรือ MY_PAGE_ID เป็นหลักในการเก็บฐานข้อมูลยอดรวมของร้าน เพื่อให้ทุกแอดมินพิมพ์สะสมยอดเข้ากองกลางเดียวกันได้
+                        // ส่งข้อมูลไปยังฟังก์ชันประมวลผลคำสั่ง
                         await processSumMessage(MY_PAGE_ID, messageText, recipientId);
                     }
                 }
