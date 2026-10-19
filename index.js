@@ -172,9 +172,9 @@ async function processSumMessage(chatId, messageText, senderId) {
         return;
     }
 
-    // 6. รองรับพิมพ์ยอดเงิน (เช่น .254) -> ดักจับหลังจุดแล้วนำมารวมทันที
-    if (messageText.startsWith('.')) {
-        const addedNum = parseFloat(messageText.substring(1).trim());
+    // 6. รองรับพิมพ์ยอดเงินขึ้นต้นด้วยจุดสองจุด (เช่น ..254) -> ตัด ".." ออกแล้วนำตัวเลขข้างหลังมารวมทันที
+    if (messageText.startsWith('..')) {
+        const addedNum = parseFloat(messageText.substring(2).trim());
         if (!isNaN(addedNum)) {
             let dayData = await getDayData(chatId, todayStr);
             dayData.items.push({ time: timeStr, amount: addedNum });
@@ -211,7 +211,7 @@ function sendInteractiveMenu(recipientId) {
                     template_type: "button",
                     text: "📌 กรุณาเลือกคำสั่งที่ต้องการทำต่อ:",
                     buttons: [
-                        { type: "postback", title: "➕ เพิ่มยอดด่วน (.254)", payload: ".254" },
+                        { type: "postback", title: "➕ เพิ่มยอดด่วน (..254)", payload: "..254" },
                         { type: "postback", title: "📊 ดูสรุปยอดวันนี้", payload: "สรุป" },
                         { type: "postback", title: "🗑️ ล้างข้อมูลวันนี้", payload: "clear" }
                     ]
