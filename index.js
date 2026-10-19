@@ -10,8 +10,50 @@ const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN || "EAAM6LCCIUjcBSxgNN8Z
 const VERIFY_TOKEN = "12345";
 const MY_PAGE_ID = "1308276022380261"; 
 
-// ฐานข้อมูลจำลองในหน่วยความจำชั่วคราว (หรือต่อยอดเก็บไฟล์)
-let memoryDb = {};
+// GitHub Config สำหรับเก็บข้อมูลเป็นไฟล์ JSON
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+const GITHUB_OWNER = process.env.GITHUB_OWNER || "piyadee258910-dotcom";
+const GITHUB_REPO = process.env.GITHUB_REPO || "fb-sum-bot";
+const FILE_PATH = "user_logs.json";
+
+// ฟังก์ชันดึงข้อมูลจากไฟล์ JSON บน GitHub
+async function getGitHubFile() {
+    try {
+        const url = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${FILE_PATH}`;
+        const response = await axios.get(url, {
+            headers: { Authorization: `token ${GITHUB_TOKEN}` }
+        });
+        const content = Buffer.from(response.data.content, 'base64').toString('utf8');
+        return { data: JSON.parse(content), sha: response.data.sha };
+    } catch (error) {
+        // ถ้ายังไม่มีไฟล์ ให้คืนค่าว่างและ sha เป็น null
+        return { data: {}, sha: null };
+    }
+}
+
+// ฟังก์ชันบันทึกข้อมูลอัปเดตลงไฟล์ JSON บน GitHub
+async function saveGitHubFile(updatedData, sha) {
+    try {
+        const url = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${FILE_PATH}`;
+        const contentEncoded = Buffer.from(JSON.stringify(updatedData, null, 2)).toString('base64');
+        
+        const body = {
+            message: "Update user logs via bot",
+            content: contentEncoded,
+            sha: sha // ต้องใช้ sha ของไฟล์เดิมเพื่อทำการ Update ทับ
+        };
+
+        const response = await axios.put(url, body, {
+            headers: { 
+                Authorization: `token ${GITHUB_TOKEN}`,
+                'Content-Type': 'application/json'
+            }
+        });
+        return response.data.content.sha;
+    } catch (error) {
+        console.error("❌ บันทึกลง GitHub ไม่สำเร็จ:", error.response ? error.response.data : error.message);
+    }
+}
 
 // 1. ส่วนสำหรับ Facebook ยืนยันตัวตน Webhook (Verification)
 app.get('/webhook', (req, res) => {
@@ -64,17 +106,19 @@ app.post('/webhook', async (req, res) => {
     }
 });
 
-function getDayData(chatId, dateStr) {
-    if (!memoryDb[chatId]) memoryDb[chatId] = {};
-    if (!memoryDb[chatId][dateStr]) {
+async function getDayData(chatId, dateStr) {
+    const { data } = await getGitHubFile();
+    if (!data[chatId] || !data[chatId][dateStr]) {
         return { total: 0, items: [] };
     }
-    return memoryDb[chatId][dateStr];
+    return data[chatId][dateStr];
 }
 
-function saveDayData(chatId, dateStr, dayData) {
-    if (!memoryDb[chatId]) memoryDb[chatId] = {};
-    memoryDb[chatId][dateStr] = dayData;
+async function saveDayData(chatId, dateStr, dayData) {
+    const { data, sha } = await getGitHubFile();
+    if (!data[chatId]) data[chatId] = {};
+    data[chatId][dateStr] = dayData;
+    await saveGitHubFile(data, sha);
 }
 
 function parseDateInput(inputStr) {
@@ -104,7 +148,11 @@ async function processSumMessage(chatId, messageText, senderId) {
 
     // 2. CLEAR ทั้งหมด
     if (lowerText === 'clear') {
-        if (memoryDb[chatId]) delete memoryDb[chatId];
+        const { data, sha } = await getGitHubFile();
+        if (data[chatId]) {
+            delete data[chatId];
+            await saveGitHubFile(data, sha);
+        }
         sendMessengerMessage(senderId, `🗑️ รีเซ็ตยอดและรายการทั้งหมดเรียบร้อย | ยอดรวม: 0`);
         return;
     }
@@ -112,8 +160,10 @@ async function processSumMessage(chatId, messageText, senderId) {
     // 3. CLEAR เฉพาะวัน
     if (lowerText.startsWith('clear ')) {
         const targetDate = parseDateInput(messageText.substring(6).trim());
-        if (memoryDb[chatId] && memoryDb[chatId][targetDate]) {
-            delete memoryDb[chatId][targetDate];
+        const { data, sha } = await getGitHubFile();
+        if (data[chatId] && data[chatId][targetDate]) {
+            delete data[chatId][targetDate];
+            await saveGitHubFile(data, sha);
         }
         sendMessengerMessage(senderId, `🗑️ ลบข้อมูลของวันที่ ${targetDate} เรียบร้อยแล้ว`);
         return;
@@ -121,14 +171,15 @@ async function processSumMessage(chatId, messageText, senderId) {
 
     // 4. SUM ทั้งหมด (ดูรายการทุกวัน)
     if (lowerText === 'list' || lowerText === 'sum' || lowerText === 'ยอดรวมทั้งหมด') {
-        if (!memoryDb[chatId] || Object.keys(memoryDb[chatId]).length === 0) {
+        const { data } = await getGitHubFile();
+        if (!data[chatId] || Object.keys(data[chatId]).length === 0) {
             sendMessengerMessage(senderId, `📅 ยังไม่มีรายการค้างในระบบ`);
             return;
         }
 
         let grandTotal = 0;
         let replyText = `📊 สรุปยอดค้างทั้งหมดทุกวัน:\n`;
-        for (const [dateStr, dayData] of Object.entries(memoryDb[chatId])) {
+        for (const [dateStr, dayData] of Object.entries(data[chatId])) {
             if (dayData.items && dayData.items.length > 0) {
                 replyText += `\n📅 [${dateStr}] รายการ:\n`;
                 dayData.items.forEach((item, idx) => {
@@ -154,18 +205,18 @@ async function processSumMessage(chatId, messageText, senderId) {
     if (messageText.startsWith('..')) {
         const addedNum = parseFloat(messageText.substring(2).trim());
         if (!isNaN(addedNum)) {
-            let dayData = getDayData(chatId, todayStr);
+            let dayData = await getDayData(chatId, todayStr);
             dayData.items.push({ time: timeStr, amount: addedNum });
             dayData.total = dayData.items.reduce((sum, item) => sum + item.amount, 0);
 
-            saveDayData(chatId, todayStr, dayData);
+            await saveDayData(chatId, todayStr, dayData);
             sendSpecificDateSummary(chatId, todayStr, senderId);
         }
     }
 }
 
-function sendSpecificDateSummary(chatId, dateStr, senderId) {
-    const dayData = getDayData(chatId, dateStr);
+async function sendSpecificDateSummary(chatId, dateStr, senderId) {
+    const dayData = await getDayData(chatId, dateStr);
     let replyText = `📅 [${dateStr}] รายการประจำวัน:\n`;
 
     if (dayData.items.length === 0) {
