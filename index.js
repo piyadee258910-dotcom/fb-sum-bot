@@ -49,8 +49,8 @@ app.post('/webhook', async (req, res) => {
 
                         console.log(`==> ได้รับข้อความจาก sender: ${senderId}, recipient: ${recipientId}, pageId: ${pageId}`);
                         
-                        // ส่งข้อมูลไปยังฟังก์ชันประมวลผลคำสั่ง
-                        await processSumMessage(MY_PAGE_ID, messageText, recipientId);
+                        // ใช้ MY_PAGE_ID เป็นฐานข้อมูลกลาง และส่ง senderId กลับไปหาคนที่พิมพ์
+                        await processSumMessage(MY_PAGE_ID, messageText, senderId);
                     }
                 }
             }
