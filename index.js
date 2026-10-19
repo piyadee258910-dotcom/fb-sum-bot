@@ -56,7 +56,7 @@ app.post('/webhook', async (req, res) => {
                         await processSumMessage(targetChatId, messageText, senderId);
                     }
 
-                    // --- กรณีมีการกดปุ่ม (Postback) เช่น Persistent Menu ---
+                    // --- กรณีมีการกดปุ่ม (Postback) เช่น Persistent Menu หรือปุ่มกด ---
                     if (webhookEvent.postback && webhookEvent.postback.payload) {
                         const payload = webhookEvent.postback.payload.trim();
                         console.log(`==> ได้รับปุ่มกด (Postback) | Target Chat/Group ID: ${targetChatId} | Sender: ${senderId} | Payload: ${payload}`);
@@ -126,20 +126,20 @@ async function processSumMessage(chatId, messageText, senderId) {
     const todayStr = now.toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
     const timeStr = now.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Bangkok' });
 
-    // --- ถ้าพิมพ์แค่จุด (.) ตัวเดียว ให้ส่งปุ่มเมนูโต้ตอบกลับไป ---
+    // --- 1. ถ้าพิมพ์แค่จุด (.) ตัวเดียว ให้ส่งปุ่มเมนูโต้ตอบกลับไป ---
     if (messageText === '.') {
         sendInteractiveMenu(senderId);
         return;
     }
 
-    // --- CLEAR ทั้งหมด ---
+    // --- 2. CLEAR ทั้งหมด ---
     if (lowerText === 'clear') {
         await supabase.from('user_logs').delete().eq('sender_id', chatId);
         sendMessengerMessage(senderId, `🗑️ รีเซ็ตยอดและรายการทั้งหมดในกลุ่มนี้เรียบร้อย | ยอดรวม: 0`);
         return;
     }
 
-    // --- CLEAR เฉพาะวัน ---
+    // --- 3. CLEAR เฉพาะวัน ---
     if (lowerText.startsWith('clear ')) {
         const targetDate = parseDateInput(messageText.substring(6).trim());
         await supabase.from('user_logs').delete().eq('sender_id', chatId).eq('date_str', targetDate);
@@ -147,7 +147,7 @@ async function processSumMessage(chatId, messageText, senderId) {
         return;
     }
 
-    // --- SUM ทั้งหมด ---
+    // --- 4. SUM ทั้งหมด ---
     if (lowerText === 'sum' || lowerText === 'สรุป' || lowerText === 'list') {
         const { data: allRows } = await supabase.from('user_logs').select('*').eq('sender_id', chatId).order('date_str', { ascending: true });
         if (!allRows || allRows.length === 0) {
@@ -172,14 +172,14 @@ async function processSumMessage(chatId, messageText, senderId) {
         return;
     }
 
-    // --- SUM เฉพาะวัน ---
+    // --- 5. SUM เฉพาะวัน ---
     if (lowerText.startsWith('sum ') || lowerText.startsWith('สรุป ')) {
         const targetDate = parseDateInput(messageText.split(/\s+/)[1]);
         sendSpecificDateSummary(chatId, targetDate, senderId);
         return;
     }
 
-    // --- รองรับพิมพ์ยอดเงิน (เช่น .254) ---
+    // --- 6. รองรับพิมพ์ยอดเงินต่อท้ายจุด (เช่น .254) ---
     if (messageText.startsWith('.')) {
         const addedNum = parseFloat(messageText.substring(1).trim());
         if (!isNaN(addedNum)) {
