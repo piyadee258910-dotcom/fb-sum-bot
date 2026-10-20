@@ -67,7 +67,7 @@ app.get('/webhook', (req, res) => {
     }
 });
 
-// 2. ส่วนสำหรับรับข้อความแชท (รองรับทั้งลูกค้าส่งมา และแอดมินพิมพ์จากฝั่งเพจ)
+// 2. ส่วนสำหรับรับข้อความ Webhook จาก Facebook ปกติ
 app.post('/webhook', async (req, res) => {
     const body = req.body;
 
@@ -82,31 +82,11 @@ app.post('/webhook', async (req, res) => {
                     const messageText = messageObj.text ? messageObj.text.trim() : '';
                     if (!messageText) continue;
 
-                    let targetChatId = null;
                     const senderId = webhookEvent.sender ? webhookEvent.sender.id : null;
-                    const recipientId = webhookEvent.recipient ? webhookEvent.recipient.id : null;
+                    if (!senderId || senderId === MY_PAGE_ID) continue;
 
-                    // ตรวจสอบว่าข้อความมาจากฝั่งเพจส่งออกไป หรือลูกค้าส่งเข้ามา
-                    if (messageObj.is_echo || senderId === MY_PAGE_ID) {
-                        targetChatId = recipientId; // ถ้าแอดมินพิมพ์ เป้าหมายคือ ID ของลูกค้าในห้องแชทนั้น
-                        console.log(`==> [Admin Action] เพจส่งออกไปหาลูกค้า (${targetChatId}): ${messageText}`);
-                    } else {
-                        targetChatId = senderId; // ถ้าลูกค้าส่งมา เป้าหมายคือ ID ของลูกค้าคนนั้น
-                        console.log(`==> [Customer Message] ลูกค้า (${targetChatId}) ส่งเข้ามา: ${messageText}`);
-                    }
-
-                    if (!targetChatId || targetChatId === MY_PAGE_ID) continue;
-
-                    // ถ้าข้อความเริ่มต้นด้วย .. หรือเป็นคำสั่งระบบ ให้บอททำงานทันที
-                    if (messageText.startsWith('..') || messageText === 'สรุป' || messageText === 'list' || messageText === 'sum' || messageText.toLowerCase() === 'clear' || messageText === '.') {
-                        await processSumMessage(targetChatId, messageText, targetChatId);
-                    }
-
-                    // รองรับกรณีลูกค้ากดปุ่ม Postback
-                    if (webhookEvent.postback && webhookEvent.postback.payload) {
-                        const payload = webhookEvent.postback.payload.trim();
-                        await processSumMessage(targetChatId, payload, targetChatId);
-                    }
+                    console.log(`==> [Customer Message] ลูกค้า (${senderId}) ส่งเข้ามา: ${messageText}`);
+                    await processSumMessage(senderId, messageText, senderId);
                 }
             }
         }
@@ -114,6 +94,22 @@ app.post('/webhook', async (req, res) => {
     } else {
         res.sendStatus(404);
     }
+});
+
+// 3. 🚀 [Admin Shortcut Endpoint] สำหรับจำลองแอดมินยิงคำสั่งตรงหา PSID ของลูกค้า
+// วิธีใช้: เปิดเบราว์เซอร์ไปที่ https://fb-sum-bot.onrender.com/admin-test?id=40596878549910707&text=..100
+app.get('/admin-test', async (req, res) => {
+    const targetChatId = req.query.id; // ดึง PSID ลูกค้าจาก URL
+    const commandText = req.query.text; // ดึงข้อความคำสั่ง เช่น ..100 หรือ สรุป
+
+    if (!targetChatId || !commandText) {
+        return res.status(400).send("❌ กรุณาระบุ ?id=...&text=... ให้ครบถ้วน");
+    }
+
+    console.log(`==> [Admin Test API] สั่งการไปยังลูกค้า (${targetChatId}): ${commandText}`);
+    await processSumMessage(targetChatId, commandText, targetChatId);
+
+    res.status(200).send(`✅ ประมวลผลคำสั่ง "${commandText}" ให้ลูกค้า ID: ${targetChatId} เรียบร้อยแล้ว!`);
 });
 
 async function getDayData(chatId, dateStr) {
@@ -150,13 +146,11 @@ async function processSumMessage(chatId, messageText, responseTargetId) {
     const todayStr = now.toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
     const timeStr = now.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Bangkok' });
 
-    // 1. ถ้าพิมพ์จุด (.) ตัวเดียว ให้เด้งปุ่มเมนูโต้ตอบ
     if (messageText === '.') {
         sendInteractiveMenu(responseTargetId);
         return;
     }
 
-    // 2. CLEAR ทั้งหมด
     if (lowerText === 'clear') {
         const { data, sha } = await getGitHubFile();
         if (data[chatId]) {
@@ -167,7 +161,6 @@ async function processSumMessage(chatId, messageText, responseTargetId) {
         return;
     }
 
-    // 3. CLEAR เฉพาะวัน
     if (lowerText.startsWith('clear ')) {
         const targetDate = parseDateInput(messageText.substring(6).trim());
         const { data, sha } = await getGitHubFile();
@@ -179,7 +172,6 @@ async function processSumMessage(chatId, messageText, responseTargetId) {
         return;
     }
 
-    // 4. SUM ทั้งหมด (ดูรายการทุกวัน)
     if (lowerText === 'list' || lowerText === 'sum' || lowerText === 'ยอดรวมทั้งหมด') {
         const { data } = await getGitHubFile();
         if (!data[chatId] || Object.keys(data[chatId]).length === 0) {
@@ -204,14 +196,12 @@ async function processSumMessage(chatId, messageText, responseTargetId) {
         return;
     }
 
-    // 5. SUM เฉพาะวัน หรือพิมพ์ "สรุป"
     if (lowerText.startsWith('sum ') || lowerText === 'สรุป') {
         const targetDate = (messageText === 'สรุป') ? todayStr : parseDateInput(messageText.split(/\s+/)[1]);
         sendSpecificDateSummary(chatId, targetDate, responseTargetId);
         return;
     }
 
-    // 6. รองรับพิมพ์ยอดเงินขึ้นต้นด้วยจุดสองจุด (เช่น ..254)
     if (messageText.startsWith('..')) {
         const addedNum = parseFloat(messageText.substring(2).trim());
         if (!isNaN(addedNum)) {
