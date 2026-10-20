@@ -1,47 +1,67 @@
 const express = require('express');
 const bodyParser = require('body-parser');
 const axios = require('axios');
-const fs = require('fs');
-const path = require('path');
 
 const app = express();
 app.use(bodyParser.json());
 
-// Token สำหรับเชื่อมต่อ Facebook Messenger API
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "your_verify_token_here";
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN || "your_page_access_token_here";
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN; // Token ของ GitHub
+const GITHUB_REPO = process.env.GITHUB_REPO || "piyadee258910-dotcom/fb-sum-bot"; // ชื่อ Repo เช่น username/repo
 
-// ไฟล์สำหรับเก็บข้อมูลฐานข้อมูลแบบถาวร
-const DB_FILE = path.join(__dirname, 'database.json');
-const CUSTOMERS_FILE = path.join(__dirname, 'recent_customers.json');
+let db = {};
+let recentCustomers = {};
 
-// ฟังก์ชันโหลดข้อมูลจากไฟล์ JSON
-function loadData(filePath, defaultVal = {}) {
+// ฟังก์ชันดึงข้อมูลจาก GitHub (ตอนเปิดเซิร์ฟเวอร์)
+async function loadDataFromGitHub() {
     try {
-        if (fs.existsSync(filePath)) {
-            let rawData = fs.readFileSync(filePath, 'utf8');
-            return JSON.parse(rawData);
-        }
-    } catch (error) {
-        console.error("Error reading file:", error);
-    }
-    return defaultVal;
-}
-
-// ฟังก์ชันบันทึกข้อมูลลงไฟล์ JSON
-function saveData(filePath, data) {
-    try {
-        fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8');
-    } catch (error) {
-        console.error("Error writing file:", error);
+        if (!GITHUB_TOKEN) return;
+        let res = await axios.get(`https://api.github.com/repos/${GITHUB_REPO}/contents/database.json`, {
+            headers: { Authorization: `token ${GITHUB_TOKEN}` }
+        });
+        let content = Buffer.from(res.data.content, 'base64').toString('utf8');
+        db = JSON.parse(content);
+        console.log("📥 โหลดข้อมูลจาก GitHub สำเร็จ!");
+    } catch (err) {
+        console.log("⚠️ ยังไม่มีไฟล์ database.json บน GitHub หรือดึงข้อมูลไม่ได้ (เริ่มระบบด้วยข้อมูลเปล่า)");
     }
 }
 
-// โหลดฐานข้อมูลขึ้นมาใช้งาน
-let db = loadData(DB_FILE, {});
-let recentCustomers = loadData(CUSTOMERS_FILE, {});
+// ฟังก์ชันบันทึกข้อมูลกลับขึ้น GitHub อัตโนมัติ
+async function saveToGitHub() {
+    if (!GITHUB_TOKEN) return;
+    try {
+        let path = 'database.json';
+        let contentBase64 = Buffer.from(JSON.stringify(db, null, 2)).toString('base64');
+        
+        // เช็ก SHA เดิมของไฟล์ก่อนอัปเดต (GitHub API ต้องการ)
+        let sha = '';
+        try {
+            let fileRes = await axios.get(`https://api.github.com/repos/${GITHUB_REPO}/contents/${path}`, {
+                headers: { Authorization: `token ${GITHUB_TOKEN}` }
+            });
+            sha = fileRes.data.sha;
+        } catch (e) {}
 
-// ฟังก์ชันส่งข้อความกลับหาลูกค้าทาง Messenger
+        // ส่งข้อมูล Commit กลับเข้า GitHub
+        await axios.put(`https://api.github.com/repos/${GITHUB_REPO}/contents/${path}`, {
+            message: 'Auto-update database.json via Bot',
+            content: contentBase64,
+            sha: sha
+        }, {
+            headers: { Authorization: `token ${GITHUB_TOKEN}` }
+        });
+        console.log("📤 บันทึกข้อมูลลง GitHub สำเร็จ!");
+    } catch (err) {
+        console.error("❌ บันทึก GitHub ไม่สำเร็จ:", err.response?.data || err.message);
+    }
+}
+
+// โหลดข้อมูลทันทีเมื่อเซิร์ฟเวอร์เริ่มทำงาน
+loadDataFromGitHub();
+
+// ฟังก์ชันส่งข้อความทาง Messenger
 async function sendMessengerMessage(recipientId, messageText) {
     try {
         await axios.post(`https://graph.facebook.com/v21.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`, {
@@ -55,13 +75,12 @@ async function sendMessengerMessage(recipientId, messageText) {
 
 // 1. หน้าแรก
 app.get('/', (req, res) => {
-    res.send("Webhook server with Persistent Storage is running successfully! 🚀");
+    res.send("Webhook server with GitHub Sync is running! 🚀");
 });
 
-// 2. หน้าแอดมินด่วน (/admin)
+// 2. หน้าแอดมินด่วน
 app.get('/admin', (req, res) => {
     let customerListHTML = '';
-    
     for (let psid in recentCustomers) {
         let cust = recentCustomers[psid];
         customerListHTML += `
@@ -78,7 +97,6 @@ app.get('/admin', (req, res) => {
             </div>
         `;
     }
-
     res.send(`
         <!DOCTYPE html>
         <html>
@@ -99,10 +117,9 @@ app.get('/admin', (req, res) => {
     `);
 });
 
-// 3. หน้าจัดการลูกค้า (/customer)
+// 3. หน้าจัดการลูกค้า /customer
 app.get('/customer', (req, res) => {
     let htmlContent = '';
-
     for (let psid in db) {
         let customerData = db[psid];
         let totalAllDays = 0;
@@ -160,37 +177,25 @@ app.get('/customer', (req, res) => {
             <p><a href="/admin" style="color: #007bff; text-decoration: none;">⬅️ กลับไปหน้าแอดมินด่วน</a></p>
             <hr style="margin-bottom: 20px; border: 0; border-top: 1px solid #ccc;">
             ${htmlContent}
-
             <script>
                 function addAmount(psid) {
-                    let amount = prompt("กรอกจำนวนเงินที่ต้องการเพิ่ม (เช่น 100 หรือ 500):");
+                    let amount = prompt("กรอกจำนวนเงินที่ต้องการเพิ่ม:");
                     if (amount && !isNaN(amount)) {
-                        fetch('/customer-action', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ action: 'add', psid: psid, amount: parseFloat(amount) })
-                        }).then(res => res.text()).then(data => { alert(data); location.reload(); });
+                        fetch('/customer-action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'add', psid, amount: parseFloat(amount) }) })
+                        .then(res => res.text()).then(data => { alert(data); location.reload(); });
                     }
                 }
-
                 function editItem(psid, date, index, oldAmount) {
                     let newAmount = prompt("แก้ไขจำนวนเงินใหม่:", oldAmount);
                     if (newAmount && !isNaN(newAmount)) {
-                        fetch('/customer-action', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ action: 'edit', psid: psid, date: date, index: index, amount: parseFloat(newAmount) })
-                        }).then(res => res.text()).then(data => { alert(data); location.reload(); });
+                        fetch('/customer-action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'edit', psid, date, index, amount: parseFloat(newAmount) }) })
+                        .then(res => res.text()).then(data => { alert(data); location.reload(); });
                     }
                 }
-
                 function deleteItem(psid, date, index) {
                     if (confirm("ต้องการลบรายการนี้ใช่หรือไม่?")) {
-                        fetch('/customer-action', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ action: 'delete', psid: psid, date: date, index: index })
-                        }).then(res => res.text()).then(data => { alert(data); location.reload(); });
+                        fetch('/customer-action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'delete', psid, date, index }) })
+                        .then(res => res.text()).then(data => { alert(data); location.reload(); });
                     }
                 }
             </script>
@@ -199,11 +204,10 @@ app.get('/customer', (req, res) => {
     `);
 });
 
-// API รองรับการจัดการข้อมูลลูกค้า พร้อมบันทึกลงไฟล์
-app.post('/customer-action', express.json(), (req, res) => {
+// API จัดการข้อมูลและสั่ง Push ขึ้น GitHub อัตโนมัติ
+app.post('/customer-action', express.json(), async (req, res) => {
     let { action, psid, date, index, amount } = req.body;
     let today = new Date().toISOString().split('T')[0];
-
     if (!db[psid]) db[psid] = {};
 
     if (action === 'add') {
@@ -215,36 +219,28 @@ app.post('/customer-action', express.json(), (req, res) => {
         if (db[psid][date] && db[psid][date][index]) {
             db[psid][date][index].amount = amount;
             res.send("แก้ไขข้อมูลสำเร็จ!");
-        } else {
-            return res.status(400).send("ไม่พบรายการที่ต้องการแก้ไข");
-        }
+        } else { return res.status(400).send("ไม่พบรายการ"); }
     } else if (action === 'delete') {
         if (db[psid][date] && db[psid][date][index] !== undefined) {
             db[psid][date].splice(index, 1);
             res.send("ลบรายการสำเร็จ!");
-        } else {
-            return res.status(400).send("ไม่พบรายการที่ต้องการลบ");
-        }
-    } else {
-        return res.status(400).send("Action ไม่ถูกต้อง");
-    }
+        } else { return res.status(400).send("ไม่พบรายการ"); }
+    } else { return res.status(400).send("Action ไม่ถูกต้อง"); }
 
-    // เซฟข้อมูลลงไฟล์ทันทีทุกครั้งที่มีการเปลี่ยนแปลง
-    saveData(DB_FILE, db);
+    await saveToGitHub();
 });
 
-// 4. Webhook รับข้อความ Messenger
-app.post('/webhook', (req, res) => {
+// Webhook รับข้อความ Messenger
+app.post('/webhook', async (req, res) => {
     let body = req.body;
     if (body.object === 'page') {
-        body.entry.forEach(entry => {
+        for (let entry of body.entry) {
             let webhook_event = entry.messaging[0];
             let senderPSID = webhook_event.sender.id;
 
             if (webhook_event.message && webhook_event.message.text) {
                 let incomingText = webhook_event.message.text.trim();
                 recentCustomers[senderPSID] = { lastMessage: incomingText, time: new Date().toLocaleTimeString() };
-                saveData(CUSTOMERS_FILE, recentCustomers);
 
                 let today = new Date().toISOString().split('T')[0];
                 if (!db[senderPSID]) db[senderPSID] = {};
@@ -256,24 +252,24 @@ app.post('/webhook', (req, res) => {
                     if (!isNaN(amount)) {
                         let timeNow = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
                         db[senderPSID][today].push({ time: timeNow, amount: amount });
-                        saveData(DB_FILE, db); // เซฟลงไฟล์
+                        await saveToGitHub(); // เซฟลง GitHub ทันที
 
                         let total = db[senderPSID][today].reduce((sum, item) => sum + item.amount, 0);
                         let listText = db[senderPSID][today].map((item, idx) => `${idx + 1}. [${item.time}] +${item.amount}`).join('\n');
                         replyMessage = `📅 [${today}] รายการประจำวัน:\n${listText}\n-------------------\n💰 ยอดรวมของวัน: ${total}`;
                     }
                 }
-                if (replyMessage) sendMessengerMessage(senderPSID, replyMessage);
+                if (replyMessage) await sendMessengerMessage(senderPSID, replyMessage);
             }
-        });
+        }
         res.status(200).send('EVENT_RECEIVED');
     } else {
         res.sendStatus(404);
     }
 });
 
-// 5. ลิงก์ทดสอบด่วน /admin-test
-app.get('/admin-test', (req, res) => {
+// ลิงก์ทดสอบด่วน /admin-test
+app.get('/admin-test', async (req, res) => {
     let psid = req.query.id;
     let text = req.query.text;
     if (!psid || !text) return res.send("❌ กรุณาระบุ ?id=PSID&text=ข้อความ");
@@ -287,7 +283,7 @@ app.get('/admin-test', (req, res) => {
     if (!isNaN(amount)) {
         let timeNow = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
         db[psid][today].push({ time: timeNow, amount: amount });
-        saveData(DB_FILE, db); // เซฟลงไฟล์
+        await saveToGitHub(); // เซฟลง GitHub ทันที
 
         let total = db[psid][today].reduce((sum, item) => sum + item.amount, 0);
         let listText = db[psid][today].map((item, idx) => `${idx + 1}. [${item.time}] +${item.amount}`).join('\n');
@@ -296,12 +292,11 @@ app.get('/admin-test', (req, res) => {
         replyMessage = `⚙️ แอดมิน: ${text}`;
     }
 
-    sendMessengerMessage(psid, replyMessage);
+    await sendMessengerMessage(psid, replyMessage);
     res.send(`✅ ดำเนินการให้ PSID: ${psid} เรียบร้อย!`);
 });
 
-// รันเซิร์ฟเวอร์
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-    console.log(`Webhook server with Persistent Storage is running on port ${PORT}`);
+    console.log(`Webhook server with GitHub API sync is running on port ${PORT}`);
 });
