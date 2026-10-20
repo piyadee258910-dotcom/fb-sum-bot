@@ -3,7 +3,7 @@ const bodyParser = require('body-parser');
 const axios = require('axios');
 
 const app = express();
-app.use(bodyParser.json({ limit: '20mb' })); // ขยายขนาดรับข้อมูลรูปภาพหลายรูป
+app.use(bodyParser.json({ limit: '20mb' }));
 
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "your_verify_token_here";
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN || "your_page_access_token_here";
@@ -13,7 +13,7 @@ const GITHUB_REPO = process.env.GITHUB_REPO || "piyadee258910-dotcom/fb-sum-bot"
 let db = {};
 let recentCustomers = {};
 
-// 1. ฟังก์ชันดึงข้อมูลจาก GitHub (ตอนเปิดเซิร์ฟเวอร์)
+// 1. ฟังก์ชันดึงข้อมูลจาก GitHub
 async function loadDataFromGitHub() {
     try {
         if (!GITHUB_TOKEN) return;
@@ -69,11 +69,11 @@ async function sendMessengerMessage(recipientId, messageText) {
     }
 }
 
-// ฟังก์ชันส่งรูปภาพทาง Messenger (ใช้ Public URL)
+// ฟังก์ชันส่งรูปภาพทาง Messenger (แก้ไข URL ให้ถูกต้องแล้ว)
 async function sendMessengerImage(recipientId, imageUrl) {
     try {
         if (!PAGE_ACCESS_TOKEN || PAGE_ACCESS_TOKEN === "your_page_access_token_here") return;
-        await axios.post(`https://graph.facebook.0/v21.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`, {
+        await axios.post(`https://graph.facebook.com/v21.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`, {
             recipient: { id: recipientId },
             message: {
                 attachment: {
@@ -85,6 +85,7 @@ async function sendMessengerImage(recipientId, imageUrl) {
                 }
             }
         });
+        console.log("🖼️ ส่งรูปภาพสำเร็จ PSID:", recipientId);
     } catch (error) {
         console.error("❌ Error sending image:", error.response?.data || error.message);
     }
@@ -292,7 +293,7 @@ app.get('/customer', (req, res) => {
                         await new Promise((resolve) => {
                             let reader = new FileReader();
                             reader.onload = function(e) {
-                                let base64Data = e.target.result.split(',')[1]; // ตัด header ออกเอาเฉพาะ base64
+                                let base64Data = e.target.result.split(',')[1];
                                 fetch('/customer-action', {
                                     method: 'POST',
                                     headers: { 'Content-Type': 'application/json' },
@@ -300,7 +301,7 @@ app.get('/customer', (req, res) => {
                                 })
                                 .then(res => res.text())
                                 .then(() => {
-                                    setTimeout(resolve, 800); // หน่วงเวลากันส่งถี่เกินไป
+                                    setTimeout(resolve, 800);
                                 })
                                 .catch(() => resolve());
                             };
@@ -316,7 +317,6 @@ app.get('/customer', (req, res) => {
     `);
 });
 
-// ฟังก์ชันช่วยจัดเรียงรายการในแต่ละวันตามเวลา
 function sortItemsByTime(itemsArray) {
     return itemsArray.sort((a, b) => a.time.localeCompare(b.time));
 }
@@ -342,7 +342,6 @@ app.post('/customer-action', express.json({ limit: '20mb' }), async (req, res) =
         try {
             let uniqueName = `uploads/${Date.now()}_${filename.replace(/[^a-zA-Z0-9_.-]/g, '_')}`;
             
-            // อัปโหลดไฟล์รูปภาพขึ้นไปเก็บไว้บน GitHub Repository ของคุณ
             await axios.put(`https://api.github.com/repos/${GITHUB_REPO}/contents/${uniqueName}`, {
                 message: 'Upload image via admin panel',
                 content: fileData
@@ -350,10 +349,7 @@ app.post('/customer-action', express.json({ limit: '20mb' }), async (req, res) =
                 headers: { Authorization: `token ${GITHUB_TOKEN}` }
             });
 
-            // สร้าง Public URL (Raw URL ของ GitHub) เพื่อส่งให้ Facebook นำไปแสดงผลเป็นรูปภาพจริง
             let publicImageUrl = `https://raw.githubusercontent.com/${GITHUB_REPO}/main/${uniqueName}`;
-
-            // ส่งรูปภาพเข้าแชท Messenger ของลูกค้า
             await sendMessengerImage(psid, publicImageUrl);
             return res.send("อัปโหลดและส่งรูปสำเร็จ");
         } catch (err) {
