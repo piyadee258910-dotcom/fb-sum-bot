@@ -5,285 +5,206 @@ const axios = require('axios');
 const app = express();
 app.use(bodyParser.json());
 
-// === Token และข้อมูลเพจของคุณ ===
-const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN || "EAAM6LCCIUjcBSxgNN8ZAx6udmU6H2KsSKRNhz66nQbm03BOu75xNlAQY4QweSWVjrxj7ZAP54HTteBLNsoZCzfW6wPwZCmXbctbxW0K2Ivzniouk7mZAGecRx3zAv8yWA5ZAe1qZCPZBQo9fQEpNsvdRvNXZBfLNDcj8Ue7ZAfjp16Yx6PiDSO2OFq7HOky7M3NSeKxo2gHgZDZD";
-const VERIFY_TOKEN = "12345";
-const MY_PAGE_ID = "1308276022380261"; 
+// Token สำหรับเชื่อมต่อ Facebook Messenger API
+const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "your_verify_token_here";
+const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN || "your_page_access_token_here";
 
-// GitHub Config สำหรับเก็บข้อมูลเป็นไฟล์ JSON
-const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
-const GITHUB_OWNER = process.env.GITHUB_OWNER || "piyadee258910-dotcom";
-const GITHUB_REPO = process.env.GITHUB_REPO || "fb-sum-bot";
-const FILE_PATH = "user_logs.json";
+// เก็บข้อมูลยอดขายแยกตาม PSID และวันที่ (ในหน่วยความจำเซิร์ฟเวอร์)
+const db = {}; 
+// เก็บรายชื่อลูกค้าล่าสุดเพื่อให้หน้าแอดมินกดง่าย
+if (!global.recentCustomers) global.recentCustomers = {};
 
-// ฟังก์ชันดึงข้อมูลจากไฟล์ JSON บน GitHub
-async function getGitHubFile() {
+// ฟังก์ชันส่งข้อความกลับไปหาลูกค้าทาง Messenger
+async function sendMessengerMessage(recipientId, messageText) {
     try {
-        const url = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${FILE_PATH}`;
-        const response = await axios.get(url, {
-            headers: { Authorization: `token ${GITHUB_TOKEN}` }
+        await axios.post(`https://graph.facebook.com/v21.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`, {
+            recipient: { id: recipientId },
+            message: { text: messageText }
         });
-        const content = Buffer.from(response.data.content, 'base64').toString('utf8');
-        return { data: JSON.parse(content), sha: response.data.sha };
     } catch (error) {
-        return { data: {}, sha: null };
+        console.error("Error sending message:", error.response?.data || error.message);
     }
 }
 
-// ฟังก์ชันบันทึกข้อมูลอัปเดตลงไฟล์ JSON บน GitHub
-async function saveGitHubFile(updatedData, sha) {
-    try {
-        const url = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${FILE_PATH}`;
-        const contentEncoded = Buffer.from(JSON.stringify(updatedData, null, 2)).toString('base64');
-        
-        const body = {
-            message: "Update user logs via bot",
-            content: contentEncoded,
-            sha: sha 
-        };
+// 1. หน้าแรกของเซิร์ฟเวอร์
+app.get('/', (req, res) => {
+    res.send("Webhook server is running successfully! 🚀");
+});
 
-        const response = await axios.put(url, body, {
-            headers: { 
-                Authorization: `token ${GITHUB_TOKEN}`,
-                'Content-Type': 'application/json'
-            }
-        });
-        return response.data.content.sha;
-    } catch (error) {
-        console.error("❌ บันทึกลง GitHub ไม่สำเร็จ:", error.response ? error.response.data : error.message);
+// 2. หน้าแอดมินแดชบอร์ด (/admin) สำหรับคลิกดูรายชื่อและกดปุ่มบวกยอดด่วน
+app.get('/admin', (req, res) => {
+    let customerListHTML = '';
+    const recentCustomers = global.recentCustomers;
+    
+    for (let psid in recentCustomers) {
+        let cust = recentCustomers[psid];
+        customerListHTML += `
+            <div style="background: #fff; padding: 15px; margin-bottom: 12px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <strong>PSID:</strong> ${psid} <br>
+                    <small style="color: #666;">ข้อความล่าสุด: ${cust.lastMessage || '-'}</small>
+                </div>
+                <div>
+                    <button onclick="quickAction('${psid}', '..100')" style="background: #28a745; color: white; border: none; padding: 8px 12px; border-radius: 5px; cursor: pointer; margin-right: 5px;">+100</button>
+                    <button onclick="quickAction('${psid}', '..500')" style="background: #007bff; color: white; border: none; padding: 8px 12px; border-radius: 5px; cursor: pointer; margin-right: 5px;">+500</button>
+                    <button onclick="customPrompt('${psid}')" style="background: #ffc107; color: black; border: none; padding: 8px 12px; border-radius: 5px; cursor: pointer;">กำหนดเอง</button>
+                </div>
+            </div>
+        `;
     }
-}
 
-// 1. Webhook Verification
+    if (Object.keys(recentCustomers).length === 0) {
+        customerListHTML = '<p style="color: #666; text-align: center;">ยังไม่มีประวัติลูกค้าทักเข้ามาในระบบ ลองให้ลูกค้าทักข้อความมาใหม่อีกครั้งครับ</p>';
+    }
+
+    res.send(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <title>Admin Quick Dashboard</title>
+            <style>
+                body { font-family: sans-serif; background: #f0f2f5; padding: 20px; max-width: 650px; margin: auto; }
+                h2 { color: #333; }
+            </style>
+        </head>
+        <body>
+            <h2>🚀 แผงควบคุมด่วนแอดมิน (Admin Quick Dashboard)</h2>
+            <p>คลิกปุ่มเพื่อบวกยอดส่งเข้าแชทลูกค้าได้ทันทีโดยไม่ต้องหา PSID</p>
+            <hr style="margin-bottom: 20px; border: 0; border-top: 1px solid #ccc;">
+            ${customerListHTML}
+
+            <script>
+                function quickAction(psid, text) {
+                    fetch('/admin-test?id=' + psid + '&text=' + encodeURIComponent(text))
+                        .then(res => res.text())
+                        .then(data => {
+                            alert('สำเร็จ! ' + data);
+                            location.reload();
+                        })
+                        .catch(err => alert('เกิดข้อผิดพลาด: ' + err));
+                }
+
+                function customPrompt(psid) {
+                    let cmd = prompt("กรอกคำสั่งที่ต้องการ (เช่น ..250 หรือ Edit YYYY-MM-DD ลำดับ ยอด):");
+                    if (cmd) {
+                        quickAction(psid, cmd);
+                    }
+                }
+            </script>
+        </body>
+        </html>
+    `);
+});
+
+// 3. Webhook Verify (สำหรับยืนยันกับ Meta)
 app.get('/webhook', (req, res) => {
-    const mode = req.query['hub.mode'];
-    const token = req.query['hub.verify_token'];
-    const challenge = req.query['hub.challenge'];
+    let mode = req.query['hub.mode'];
+    let token = req.query['hub.verify_token'];
+    let challenge = req.query['hub.challenge'];
 
-    if (mode && token === VERIFY_TOKEN) {
-        res.status(200).send(challenge);
-    } else {
-        res.sendStatus(403);
+    if (mode && token) {
+        if (mode === 'subscribe' && token === VERIFY_TOKEN) {
+            console.log('WEBHOOK_VERIFIED');
+            res.status(200).send(challenge);
+        } else {
+            res.sendStatus(403);
+        }
     }
 });
 
-// 2. Webhook รับข้อความฝั่งลูกค้า
-app.post('/webhook', async (req, res) => {
-    const body = req.body;
+// 4. Webhook รับข้อความจาก Messenger
+app.post('/webhook', (req, res) => {
+    let body = req.body;
 
     if (body.object === 'page') {
-        for (const entry of body.entry) {
-            if (entry.messaging) {
-                for (const webhookEvent of entry.messaging) {
-                    const messageObj = webhookEvent.message;
-                    if (!messageObj) continue;
+        body.entry.forEach(entry => {
+            let webhook_event = entry.messaging[0];
+            let senderPSID = webhook_event.sender.id;
 
-                    const messageText = messageObj.text ? messageObj.text.trim() : '';
-                    if (!messageText) continue;
+            if (webhook_event.message && webhook_event.message.text) {
+                let incomingText = webhook_event.message.text.trim();
 
-                    const senderId = webhookEvent.sender ? webhookEvent.sender.id : null;
-                    if (!senderId || senderId === MY_PAGE_ID) continue;
+                // บันทึกเก็บไว้ในรายการล่าสุดสำหรับหน้าแอดมิน
+                global.recentCustomers[senderPSID] = {
+                    lastMessage: incomingText,
+                    time: new Date().toLocaleTimeString()
+                };
 
-                    // 💡 ปริ้นต์ PSID และข้อความที่ลูกค้าทักมาลง Log เพื่อให้หยิบไปใช้งานง่ายๆ
-                    console.log(`🚨 [ลูกค้าทักใหม่] PSID: ${senderId} | ข้อความ: ${messageText}`);
+                // ดึงวันที่ปัจจุบัน (YYYY-MM-DD)
+                let today = new Date().toISOString().split('T')[0];
+                if (!db[senderPSID]) db[senderPSID] = {};
+                if (!db[senderPSID][today]) db[senderPSID][today] = [];
 
-                    await processSumMessage(senderId, messageText, senderId);
+                let replyMessage = "";
+
+                // ตรวจสอบคำสั่งบวกยอด (ขึ้นต้นด้วย . หรือ ..)
+                if (incomingText.startsWith('.')) {
+                    let amountStr = incomingText.replace(/^\.+/, ''); // ตัดจุดออก
+                    let amount = parseFloat(amountStr);
+
+                    if (!isNaN(amount)) {
+                        let timeNow = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+                        db[senderPSID][today].push({ time: timeNow, amount: amount });
+
+                        // คำนวณยอดรวมของวัน
+                        let total = db[senderPSID][today].reduce((sum, item) => sum + item.amount, 0);
+                        
+                        let listText = db[senderPSID][today].map((item, idx) => `${idx + 1}. [${item.time}] +${item.amount}`).join('\n');
+                        replyMessage = `📅 [${today}] รายการประจำวัน:\n${listText}\n-------------------\n💰 ยอดรวมของวัน: ${total}`;
+                    }
+                } 
+                // คำสั่งเคลียร์ข้อมูลประจำวัน (Clear)
+                else if (incomingText.toLowerCase().startsWith('clear')) {
+                    db[senderPSID][today] = [];
+                    replyMessage = `🗑️ ล้างข้อมูลของวันที่ ${today} เรียบร้อยแล้ว`;
+                }
+
+                // ส่งข้อความตอบกลับถ้ามีข้อมูล
+                if (replyMessage) {
+                    sendMessengerMessage(senderPSID, replyMessage);
                 }
             }
-        }
+        });
         res.status(200).send('EVENT_RECEIVED');
     } else {
         res.sendStatus(404);
     }
 });
 
-// 3. Admin Shortcut Endpoint (ใช้สำหรับสั่งการผ่านลิงก์พ่วง PSID ลูกค้าโดยตรง 100%)
-// ตัวอย่าง: /admin-test?id=40596878549910707&text=..100
-app.get('/admin-test', async (req, res) => {
-    const targetChatId = req.query.id; 
-    const commandText = req.query.text; 
+// 5. ลิงก์ทดสอบด่วนหลังบ้านผ่านเบราว์เซอร์ (/admin-test)
+app.get('/admin-test', (req, res) => {
+    let psid = req.query.id;
+    let text = req.query.text;
 
-    if (!targetChatId || !commandText) {
-        return res.status(400).send("❌ กรุณาระบุ ?id=...&text=... ให้ครบถ้วน");
+    if (!psid || !text) {
+        return res.send("❌ กรุณาระบุ ?id=PSID&text=ข้อความ ให้ครบถ้วน");
     }
 
-    console.log(`==> [Admin Test API] สั่งการไปยังลูกค้า (${targetChatId}): ${commandText}`);
-    await processSumMessage(targetChatId, commandText, targetChatId);
+    let today = new Date().toISOString().split('T')[0];
+    if (!db[psid]) db[psid] = {};
+    if (!db[psid][today]) db[psid][today] = [];
 
-    res.status(200).send(`✅ ประมวลผลคำสั่ง "${commandText}" ให้ลูกค้า PSID: ${targetChatId} สำเร็จ!`);
+    let amount = parseFloat(text.replace(/^\.+/, ''));
+    let replyMessage = "";
+
+    if (!isNaN(amount)) {
+        let timeNow = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+        db[psid][today].push({ time: timeNow, amount: amount });
+
+        let total = db[psid][today].reduce((sum, item) => sum + item.amount, 0);
+        let listText = db[psid][today].map((item, idx) => `${idx + 1}. [${item.time}] +${item.amount}`).join('\n');
+        replyMessage = `📅 [${today}] รายการประจำวัน:\n${listText}\n-------------------\n💰 ยอดรวมของวัน: ${total}`;
+    } else {
+        replyMessage = `⚙️ แอดมินสั่งการ: ${text}`;
+    }
+
+    // ส่งข้อความเข้าแชทลูกค้าผ่าน API ทันที
+    sendMessengerMessage(psid, replyMessage);
+    res.send(`✅ ประพฤติกรรมคำสั่ง "${text}" ให้ลูกค้า ID: ${psid} เรียบร้อยแล้ว!`);
 });
 
-async function getDayData(chatId, dateStr) {
-    const { data } = await getGitHubFile();
-    if (!data[chatId] || !data[chatId][dateStr]) {
-        return { total: 0, items: [] };
-    }
-    return data[chatId][dateStr];
-}
-
-async function saveDayData(chatId, dateStr, dayData) {
-    const { data, sha } = await getGitHubFile();
-    if (!data[chatId]) data[chatId] = {};
-    data[chatId][dateStr] = dayData;
-    await saveGitHubFile(data, sha);
-}
-
-function parseDateInput(inputStr) {
-    inputStr = inputStr.trim();
-    const parts = inputStr.split('/');
-    if (parts.length === 3) {
-        let day = parts[0].padStart(2, '0');
-        let month = parts[1].padStart(2, '0');
-        let year = parseInt(parts[2]);
-        if (year > 2500) year -= 543;
-        return `${year}-${month}-${day}`;
-    }
-    return inputStr; 
-}
-
-async function processSumMessage(chatId, messageText, responseTargetId) {
-    const lowerText = messageText.toLowerCase();
-    const now = new Date();
-    const todayStr = now.toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
-    const timeStr = now.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Bangkok' });
-
-    if (messageText === '.') {
-        sendInteractiveMenu(responseTargetId);
-        return;
-    }
-
-    if (lowerText === 'clear') {
-        const { data, sha } = await getGitHubFile();
-        if (data[chatId]) {
-            delete data[chatId];
-            await saveGitHubFile(data, sha);
-        }
-        sendMessengerMessage(responseTargetId, `🗑️ รีเซ็ตยอดและรายการทั้งหมดเรียบร้อย | ยอดรวม: 0`);
-        return;
-    }
-
-    if (lowerText.startsWith('clear ')) {
-        const targetDate = parseDateInput(messageText.substring(6).trim());
-        const { data, sha } = await getGitHubFile();
-        if (data[chatId] && data[chatId][targetDate]) {
-            delete data[chatId][targetDate];
-            await saveGitHubFile(data, sha);
-        }
-        sendMessengerMessage(responseTargetId, `🗑️ ลบข้อมูลของวันที่ ${targetDate} เรียบร้อยแล้ว`);
-        return;
-    }
-
-    // คำสั่งแก้ไขรายการเดิม เช่น Edit 19/10/2026 2 100
-    if (lowerText.startsWith('edit ')) {
-        const parts = messageText.split(/\s+/);
-        if (parts.length >= 4) {
-            const targetDate = parseDateInput(parts[1]);
-            const itemIndex = parseInt(parts[2]) - 1;
-            const newAmount = parseFloat(parts[3]);
-
-            const { data, sha } = await getGitHubFile();
-            if (data[chatId] && data[chatId][targetDate] && data[chatId][targetDate].items[itemIndex]) {
-                data[chatId][targetDate].items[itemIndex].amount = newAmount;
-                data[chatId][targetDate].total = data[chatId][targetDate].items.reduce((sum, item) => sum + item.amount, 0);
-                
-                await saveGitHubFile(data, sha);
-                sendMessengerMessage(responseTargetId, `✏️ แก้ไขรายการที่ ${parts[2]} ของวันที่ ${targetDate} เป็น +${newAmount} สำเร็จ!`);
-                sendSpecificDateSummary(chatId, targetDate, responseTargetId);
-                return;
-            }
-        }
-        sendMessengerMessage(responseTargetId, `❌ แก้ไขไม่สำเร็จ: รูปแบบคำสั่งไม่ถูกต้อง หรือไม่พบวันที่/ลำดับรายการที่ระบุ`);
-        return;
-    }
-
-    if (lowerText === 'list' || lowerText === 'sum' || lowerText === 'ยอดรวมทั้งหมด') {
-        const { data } = await getGitHubFile();
-        if (!data[chatId] || Object.keys(data[chatId]).length === 0) {
-            sendMessengerMessage(responseTargetId, `📅 ยังไม่มีรายการค้างในระบบ`);
-            return;
-        }
-
-        let grandTotal = 0;
-        let replyText = `📊 สรุปยอดค้างทั้งหมดทุกวัน:\n`;
-        for (const [dateStr, dayData] of Object.entries(data[chatId])) {
-            if (dayData.items && dayData.items.length > 0) {
-                replyText += `\n📅 [${dateStr}] รายการ:\n`;
-                dayData.items.forEach((item, idx) => {
-                    replyText += `  ${idx + 1}. [${item.time}] +${item.amount}\n`;
-                });
-                replyText += `  ยอดรวมวันนึ้: ${dayData.total}\n`;
-                grandTotal += dayData.total;
-            }
-        }
-        replyText += `-------------------\n💰 ยอดรวมสุทธิทุกวัน: ${grandTotal}`;
-        sendMessengerMessage(responseTargetId, replyText);
-        return;
-    }
-
-    if (lowerText.startsWith('sum ') || lowerText === 'สรุป') {
-        const targetDate = (messageText === 'สรุป') ? todayStr : parseDateInput(messageText.split(/\s+/)[1]);
-        sendSpecificDateSummary(chatId, targetDate, responseTargetId);
-        return;
-    }
-
-    if (messageText.startsWith('..')) {
-        const addedNum = parseFloat(messageText.substring(2).trim());
-        if (!isNaN(addedNum)) {
-            let dayData = await getDayData(chatId, todayStr);
-            dayData.items.push({ time: timeStr, amount: addedNum });
-            dayData.total = dayData.items.reduce((sum, item) => sum + item.amount, 0);
-
-            await saveDayData(chatId, todayStr, dayData);
-            sendSpecificDateSummary(chatId, todayStr, responseTargetId);
-        }
-    }
-}
-
-async function sendSpecificDateSummary(chatId, dateStr, responseTargetId) {
-    const dayData = await getDayData(chatId, dateStr);
-    let replyText = `📅 [${dateStr}] รายการประจำวัน:\n`;
-
-    if (dayData.items.length === 0) {
-        replyText += `ยังไม่มีรายการในวันที่นี้`;
-    } else {
-        dayData.items.forEach((item, index) => {
-            replyText += `${index + 1}. [${item.time}] +${item.amount}\n`;
-        });
-        replyText += `-------------------\n💰 ยอดรวมของวัน: ${dayData.total}`;
-    }
-    sendMessengerMessage(responseTargetId, replyText);
-}
-
-function sendInteractiveMenu(recipientId) {
-    axios.post(`https://graph.facebook.com/v18.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`, {
-        recipient: { id: recipientId },
-        message: {
-            attachment: {
-                type: "template",
-                payload: {
-                    template_type: "button",
-                    text: "📌 กรุณาเลือกคำสั่งที่ต้องการทำต่อ:",
-                    buttons: [
-                        { type: "postback", title: "📊 ดูสรุปยอดวันนี้", payload: "สรุป" },
-                        { type: "postback", title: "🗑️ ล้างข้อมูลวันนี้", payload: "clear" }
-                    ]
-                }
-            }
-        }
-    })
-    .catch(err => console.error('Error sending interactive menu:', err.response ? err.response.data : err.message));
-}
-
-function sendMessengerMessage(recipientId, text) {
-    if (!recipientId || recipientId.length < 5) return;
-
-    axios.post(`https://graph.facebook.com/v18.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`, {
-        recipient: { id: recipientId },
-        message: { text: text }
-    })
-    .catch(err => console.error('Error ส่งข้อความผิดพลาด:', err.response ? err.response.data : err.message));
-}
-
+// รันเซิร์ฟเวอร์บนพอร์ต 10000
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
     console.log(`Webhook server is running on port ${PORT}`);
