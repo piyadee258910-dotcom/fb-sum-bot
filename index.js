@@ -1,6 +1,8 @@
 const express = require('express');
 const bodyParser = require('body-parser');
 const axios = require('axios');
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
 app.use(bodyParser.json());
@@ -9,9 +11,35 @@ app.use(bodyParser.json());
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "your_verify_token_here";
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN || "your_page_access_token_here";
 
-// ฐานข้อมูลในหน่วยความจำ (เก็บยอดแยกตาม PSID และวันที่)
-const db = {}; 
-if (!global.recentCustomers) global.recentCustomers = {};
+// ไฟล์สำหรับเก็บข้อมูลฐานข้อมูลแบบถาวร
+const DB_FILE = path.join(__dirname, 'database.json');
+const CUSTOMERS_FILE = path.join(__dirname, 'recent_customers.json');
+
+// ฟังก์ชันโหลดข้อมูลจากไฟล์ JSON
+function loadData(filePath, defaultVal = {}) {
+    try {
+        if (fs.existsSync(filePath)) {
+            let rawData = fs.readFileSync(filePath, 'utf8');
+            return JSON.parse(rawData);
+        }
+    } catch (error) {
+        console.error("Error reading file:", error);
+    }
+    return defaultVal;
+}
+
+// ฟังก์ชันบันทึกข้อมูลลงไฟล์ JSON
+function saveData(filePath, data) {
+    try {
+        fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8');
+    } catch (error) {
+        console.error("Error writing file:", error);
+    }
+}
+
+// โหลดฐานข้อมูลขึ้นมาใช้งาน
+let db = loadData(DB_FILE, {});
+let recentCustomers = loadData(CUSTOMERS_FILE, {});
 
 // ฟังก์ชันส่งข้อความกลับหาลูกค้าทาง Messenger
 async function sendMessengerMessage(recipientId, messageText) {
@@ -27,13 +55,12 @@ async function sendMessengerMessage(recipientId, messageText) {
 
 // 1. หน้าแรก
 app.get('/', (req, res) => {
-    res.send("Webhook server is running successfully! 🚀");
+    res.send("Webhook server with Persistent Storage is running successfully! 🚀");
 });
 
-// 2. หน้าแอดมินด่วนเดิม (/admin)
+// 2. หน้าแอดมินด่วน (/admin)
 app.get('/admin', (req, res) => {
     let customerListHTML = '';
-    const recentCustomers = global.recentCustomers;
     
     for (let psid in recentCustomers) {
         let cust = recentCustomers[psid];
@@ -72,7 +99,7 @@ app.get('/admin', (req, res) => {
     `);
 });
 
-// 3. หน้าใหม่ /customer (แสดงรายละเอียดรายชื่อ, รายการทั้งหมด, และปุ่มเพิ่ม/แก้ไข)
+// 3. หน้าจัดการลูกค้า (/customer)
 app.get('/customer', (req, res) => {
     let htmlContent = '';
 
@@ -98,7 +125,7 @@ app.get('/customer', (req, res) => {
 
             detailsHTML += `
                 <div style="background: #f9f9f9; padding: 10px; margin-top: 8px; border-radius: 6px; border-left: 4px solid #007bff;">
-                    <strong>📅 วันที่: ${date}</strong> (ยอดวันี้: ${dayTotal})
+                    <strong>📅 วันที่: ${date}</strong> (ยอดวันนี้: ${dayTotal})
                     <ul style="padding-left: 20px; margin: 5px 0 0 0;">${itemsList || '<li>ไม่มีรายการ</li>'}</ul>
                 </div>
             `;
@@ -121,7 +148,7 @@ app.get('/customer', (req, res) => {
     }
 
     if (Object.keys(db).length === 0) {
-        htmlContent = '<p style="text-align: center; color: #666; padding: 40px;">ยังไม่มีข้อมูลประวัติการทำรายการในระบบครับ (สามารถให้ลูกค้าพิมพ์คำสั่ง หรือจำลองผ่าน /admin-test ก่อนได้)</p>';
+        htmlContent = '<p style="text-align: center; color: #666; padding: 40px;">ยังไม่มีข้อมูลประวัติการทำรายการในระบบครับ</p>';
     }
 
     res.send(`
@@ -172,7 +199,7 @@ app.get('/customer', (req, res) => {
     `);
 });
 
-// API รองรับการจัดการข้อมูลลูกค้า (เพิ่ม แก้ไข ลบ) จากหน้า /customer
+// API รองรับการจัดการข้อมูลลูกค้า พร้อมบันทึกลงไฟล์
 app.post('/customer-action', express.json(), (req, res) => {
     let { action, psid, date, index, amount } = req.body;
     let today = new Date().toISOString().split('T')[0];
@@ -189,21 +216,24 @@ app.post('/customer-action', express.json(), (req, res) => {
             db[psid][date][index].amount = amount;
             res.send("แก้ไขข้อมูลสำเร็จ!");
         } else {
-            res.status(400).send("ไม่พบรายการที่ต้องการแก้ไข");
+            return res.status(400).send("ไม่พบรายการที่ต้องการแก้ไข");
         }
     } else if (action === 'delete') {
         if (db[psid][date] && db[psid][date][index] !== undefined) {
             db[psid][date].splice(index, 1);
             res.send("ลบรายการสำเร็จ!");
         } else {
-            res.status(400).send("ไม่พบรายการที่ต้องการลบ");
+            return res.status(400).send("ไม่พบรายการที่ต้องการลบ");
         }
     } else {
-        res.status(400).send("Action ไม่ถูกต้อง");
+        return res.status(400).send("Action ไม่ถูกต้อง");
     }
+
+    // เซฟข้อมูลลงไฟล์ทันทีทุกครั้งที่มีการเปลี่ยนแปลง
+    saveData(DB_FILE, db);
 });
 
-// 4. Webhook รับข้อความ Messenger ปกติ
+// 4. Webhook รับข้อความ Messenger
 app.post('/webhook', (req, res) => {
     let body = req.body;
     if (body.object === 'page') {
@@ -213,7 +243,8 @@ app.post('/webhook', (req, res) => {
 
             if (webhook_event.message && webhook_event.message.text) {
                 let incomingText = webhook_event.message.text.trim();
-                global.recentCustomers[senderPSID] = { lastMessage: incomingText, time: new Date().toLocaleTimeString() };
+                recentCustomers[senderPSID] = { lastMessage: incomingText, time: new Date().toLocaleTimeString() };
+                saveData(CUSTOMERS_FILE, recentCustomers);
 
                 let today = new Date().toISOString().split('T')[0];
                 if (!db[senderPSID]) db[senderPSID] = {};
@@ -225,6 +256,8 @@ app.post('/webhook', (req, res) => {
                     if (!isNaN(amount)) {
                         let timeNow = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
                         db[senderPSID][today].push({ time: timeNow, amount: amount });
+                        saveData(DB_FILE, db); // เซฟลงไฟล์
+
                         let total = db[senderPSID][today].reduce((sum, item) => sum + item.amount, 0);
                         let listText = db[senderPSID][today].map((item, idx) => `${idx + 1}. [${item.time}] +${item.amount}`).join('\n');
                         replyMessage = `📅 [${today}] รายการประจำวัน:\n${listText}\n-------------------\n💰 ยอดรวมของวัน: ${total}`;
@@ -254,6 +287,8 @@ app.get('/admin-test', (req, res) => {
     if (!isNaN(amount)) {
         let timeNow = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
         db[psid][today].push({ time: timeNow, amount: amount });
+        saveData(DB_FILE, db); // เซฟลงไฟล์
+
         let total = db[psid][today].reduce((sum, item) => sum + item.amount, 0);
         let listText = db[psid][today].map((item, idx) => `${idx + 1}. [${item.time}] +${item.amount}`).join('\n');
         replyMessage = `📅 [${today}] รายการประจำวัน:\n${listText}\n-------------------\n💰 ยอดรวมของวัน: ${total}`;
@@ -268,5 +303,5 @@ app.get('/admin-test', (req, res) => {
 // รันเซิร์ฟเวอร์
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-    console.log(`Webhook server is running on port ${PORT}`);
+    console.log(`Webhook server with Persistent Storage is running on port ${PORT}`);
 });
