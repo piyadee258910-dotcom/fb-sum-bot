@@ -54,7 +54,7 @@ async function saveGitHubFile(updatedData, sha) {
     }
 }
 
-// 1. ส่วนสำหรับ Facebook ยืนยันตัวตน Webhook (Verification)
+// 1. Webhook Verification
 app.get('/webhook', (req, res) => {
     const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];
@@ -67,7 +67,7 @@ app.get('/webhook', (req, res) => {
     }
 });
 
-// 2. ส่วนสำหรับรับข้อความ Webhook จาก Facebook ปกติ
+// 2. Webhook รับข้อความฝั่งลูกค้า
 app.post('/webhook', async (req, res) => {
     const body = req.body;
 
@@ -75,7 +75,6 @@ app.post('/webhook', async (req, res) => {
         for (const entry of body.entry) {
             if (entry.messaging) {
                 for (const webhookEvent of entry.messaging) {
-                    
                     const messageObj = webhookEvent.message;
                     if (!messageObj) continue;
 
@@ -85,7 +84,9 @@ app.post('/webhook', async (req, res) => {
                     const senderId = webhookEvent.sender ? webhookEvent.sender.id : null;
                     if (!senderId || senderId === MY_PAGE_ID) continue;
 
-                    console.log(`==> [Customer Message] ลูกค้า (${senderId}) ส่งเข้ามา: ${messageText}`);
+                    // 💡 ปริ้นต์ PSID และข้อความที่ลูกค้าทักมาลง Log เพื่อให้หยิบไปใช้งานง่ายๆ
+                    console.log(`🚨 [ลูกค้าทักใหม่] PSID: ${senderId} | ข้อความ: ${messageText}`);
+
                     await processSumMessage(senderId, messageText, senderId);
                 }
             }
@@ -96,11 +97,11 @@ app.post('/webhook', async (req, res) => {
     }
 });
 
-// 3. 🚀 [Admin Shortcut Endpoint] สำหรับจำลองแอดมินยิงคำสั่งตรงหา PSID ของลูกค้า
-// วิธีใช้: เปิดเบราว์เซอร์ไปที่ https://fb-sum-bot.onrender.com/admin-test?id=40596878549910707&text=..100
+// 3. Admin Shortcut Endpoint (ใช้สำหรับสั่งการผ่านลิงก์พ่วง PSID ลูกค้าโดยตรง 100%)
+// ตัวอย่าง: /admin-test?id=40596878549910707&text=..100
 app.get('/admin-test', async (req, res) => {
-    const targetChatId = req.query.id; // ดึง PSID ลูกค้าจาก URL
-    const commandText = req.query.text; // ดึงข้อความคำสั่ง เช่น ..100 หรือ สรุป
+    const targetChatId = req.query.id; 
+    const commandText = req.query.text; 
 
     if (!targetChatId || !commandText) {
         return res.status(400).send("❌ กรุณาระบุ ?id=...&text=... ให้ครบถ้วน");
@@ -109,7 +110,7 @@ app.get('/admin-test', async (req, res) => {
     console.log(`==> [Admin Test API] สั่งการไปยังลูกค้า (${targetChatId}): ${commandText}`);
     await processSumMessage(targetChatId, commandText, targetChatId);
 
-    res.status(200).send(`✅ ประมวลผลคำสั่ง "${commandText}" ให้ลูกค้า ID: ${targetChatId} เรียบร้อยแล้ว!`);
+    res.status(200).send(`✅ ประมวลผลคำสั่ง "${commandText}" ให้ลูกค้า PSID: ${targetChatId} สำเร็จ!`);
 });
 
 async function getDayData(chatId, dateStr) {
@@ -169,6 +170,29 @@ async function processSumMessage(chatId, messageText, responseTargetId) {
             await saveGitHubFile(data, sha);
         }
         sendMessengerMessage(responseTargetId, `🗑️ ลบข้อมูลของวันที่ ${targetDate} เรียบร้อยแล้ว`);
+        return;
+    }
+
+    // คำสั่งแก้ไขรายการเดิม เช่น Edit 19/10/2026 2 100
+    if (lowerText.startsWith('edit ')) {
+        const parts = messageText.split(/\s+/);
+        if (parts.length >= 4) {
+            const targetDate = parseDateInput(parts[1]);
+            const itemIndex = parseInt(parts[2]) - 1;
+            const newAmount = parseFloat(parts[3]);
+
+            const { data, sha } = await getGitHubFile();
+            if (data[chatId] && data[chatId][targetDate] && data[chatId][targetDate].items[itemIndex]) {
+                data[chatId][targetDate].items[itemIndex].amount = newAmount;
+                data[chatId][targetDate].total = data[chatId][targetDate].items.reduce((sum, item) => sum + item.amount, 0);
+                
+                await saveGitHubFile(data, sha);
+                sendMessengerMessage(responseTargetId, `✏️ แก้ไขรายการที่ ${parts[2]} ของวันที่ ${targetDate} เป็น +${newAmount} สำเร็จ!`);
+                sendSpecificDateSummary(chatId, targetDate, responseTargetId);
+                return;
+            }
+        }
+        sendMessengerMessage(responseTargetId, `❌ แก้ไขไม่สำเร็จ: รูปแบบคำสั่งไม่ถูกต้อง หรือไม่พบวันที่/ลำดับรายการที่ระบุ`);
         return;
     }
 
@@ -240,7 +264,6 @@ function sendInteractiveMenu(recipientId) {
                     template_type: "button",
                     text: "📌 กรุณาเลือกคำสั่งที่ต้องการทำต่อ:",
                     buttons: [
-                        { type: "postback", title: "➕ เพิ่มยอดด่วน (..254)", payload: "..254" },
                         { type: "postback", title: "📊 ดูสรุปยอดวันนี้", payload: "สรุป" },
                         { type: "postback", title: "🗑️ ล้างข้อมูลวันนี้", payload: "clear" }
                     ]
@@ -261,7 +284,7 @@ function sendMessengerMessage(recipientId, text) {
     .catch(err => console.error('Error ส่งข้อความผิดพลาด:', err.response ? err.response.data : err.message));
 }
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
     console.log(`Webhook server is running on port ${PORT}`);
 });
