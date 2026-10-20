@@ -9,20 +9,18 @@ app.use(bodyParser.json());
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "your_verify_token_here";
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN || "your_page_access_token_here";
 
-// เก็บข้อมูลยอดขายแยกตาม PSID (หรือชื่อ) และวันที่
+// เก็บข้อมูลยอดขายแยกตาม PSID และวันที่
 const db = {}; 
 // เก็บรายชื่อลูกค้าล่าสุดเพื่อให้หน้าแอดมินกดง่าย
 if (!global.recentCustomers) global.recentCustomers = {};
 
-// 📌 ฟังก์ชันแมป PSID ให้เป็นชื่อเล่นที่อ่านง่าย (เพิ่มรายชื่อใหม่ตรงนี้ได้เรื่อยๆ)
+// ฟังก์ชันแมป PSID ให้เป็นชื่อเล่นที่อ่านง่าย
 function getCustomerDisplayName(psid) {
     const nameMap = {
         "28515546574783938": "น้องบอล",
         "28339410642427843": "มาดามแป้ง"
-        // ถ้ามีลูกค้าประจำคนอื่น สามารถเพิ่มต่อตรงนี้ได้ เช่น:
-        // "12345678901234567": "คุณสมชาย"
     };
-    return nameMap[psid] || psid; // ถ้าไม่เจอในรายชื่อ จะแสดงเป็น PSID ตามเดิม
+    return nameMap[psid] || psid;
 }
 
 // ฟังก์ชันส่งข้อความกลับไปหาลูกค้าทาง Messenger
@@ -42,7 +40,7 @@ app.get('/', (req, res) => {
     res.send("Webhook server is running successfully! 🚀");
 });
 
-// 2. หน้าแอดมินแดชบอร์ด (/admin)
+// 2. หน้าแอดมินแดชบอร์ด (/admin) พร้อมตารางแสดงรายการยอดขาย
 app.get('/admin', (req, res) => {
     let customerListHTML = '';
     const recentCustomers = global.recentCustomers;
@@ -53,8 +51,38 @@ app.get('/admin', (req, res) => {
         let displayName = getCustomerDisplayName(psid);
         
         let totalToday = 0;
-        if (db[psid] && db[psid][today]) {
+        let itemsListHTML = '';
+
+        if (db[psid] && db[psid][today] && db[psid][today].length > 0) {
             totalToday = db[psid][today].reduce((sum, item) => sum + item.amount, 0);
+            
+            // สร้างตารางแสดงรายการยอดขายของลูกค้ารายนี้
+            itemsListHTML = `
+                <table class="sales-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>เวลา</th>
+                            <th>ยอดเงิน</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+            db[psid][today].forEach((item, idx) => {
+                itemsListHTML += `
+                    <tr>
+                        <td>${idx + 1}</td>
+                        <td>${item.time}</td>
+                        <td>+${item.amount.toLocaleString()}</td>
+                    </tr>
+                `;
+            });
+            itemsListHTML += `
+                    </tbody>
+                </table>
+            `;
+        } else {
+            itemsListHTML = `<p class="no-sales">ยังไม่มีรายการยอดขายในวันนี้</p>`;
         }
 
         customerListHTML += `
@@ -65,6 +93,11 @@ app.get('/admin', (req, res) => {
                     <small class="last-msg">💬 ข้อความล่าสุด: ${cust.lastMessage || '-'}</small><br>
                     <span class="badge-total">💰 ยอดรวมวันนี้: <strong>${totalToday.toLocaleString()}</strong> บาท</span>
                 </div>
+                
+                <div class="sales-section">
+                    ${itemsListHTML}
+                </div>
+
                 <div class="action-buttons">
                     <button class="btn btn-success" onclick="quickAction('${psid}', '..100')">+100</button>
                     <button class="btn btn-primary" onclick="quickAction('${psid}', '..500')">+500</button>
@@ -91,14 +124,19 @@ app.get('/admin', (req, res) => {
                 h2 { color: #1877f2; margin-bottom: 5px; }
                 p.sub-title { color: #65676b; margin-top: 0; }
                 .customer-card { background: #fff; padding: 18px; margin-bottom: 15px; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); display: flex; flex-direction: column; gap: 12px; }
-                @media(min-width: 500px) {
-                    .customer-card { flex-direction: row; justify-content: space-between; align-items: center; }
-                }
                 .customer-info { word-break: break-all; }
                 .name-text { color: #1877f2; font-size: 1.1em; font-weight: bold; }
                 .last-msg { color: #65676b; display: inline-block; margin-top: 4px; }
                 .badge-total { display: inline-block; margin-top: 6px; color: #2e7d32; background: #e8f5e9; padding: 3px 8px; border-radius: 6px; font-size: 0.95em; }
-                .action-buttons { display: flex; flex-wrap: wrap; gap: 6px; }
+                
+                /* สไตล์ตารางยอดขาย */
+                .sales-section { margin-top: 5px; }
+                .sales-table { width: 100%; border-collapse: collapse; margin-top: 5px; font-size: 0.9em; }
+                .sales-table th, .sales-table td { border: 1px solid #e4e6eb; padding: 6px 10px; text-align: left; }
+                .sales-table th { background-color: #f7f8fa; color: #4b4f56; }
+                .no-sales { color: #8a8d91; font-size: 0.9em; font-style: italic; margin: 5px 0; }
+
+                .action-buttons { display: flex; flex-wrap: wrap; gap: 6px; border-top: 1px solid #eee; padding-top: 10px; }
                 .btn { border: none; padding: 8px 12px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 0.9em; transition: opacity 0.2s; }
                 .btn:hover { opacity: 0.85; }
                 .btn-success { background: #2e7d32; color: white; }
@@ -160,7 +198,7 @@ app.get('/webhook', (req, res) => {
     }
 });
 
-// 4. Webhook รับข้อความจาก Messenger
+// 4. Webhook รับข้อความจาก Messenger (แก้ไขโครงสร้างปีกกาให้ถูกต้องเรียบร้อยแล้ว)
 app.post('/webhook', (req, res) => {
     let body = req.body;
 
@@ -172,7 +210,7 @@ app.post('/webhook', (req, res) => {
             if (webhook_event.message && webhook_event.message.text) {
                 let incomingText = webhook_event.message.text.trim();
 
-                // บันทึกเก็บไว้ในรายการล่าสุด (ลูกค้าใหม่จะถูกเก็บบันทึกอัตโนมัติที่นี่)
+                // บันทึกเก็บไว้ในรายการล่าสุด
                 global.recentCustomers[senderPSID] = {
                     lastMessage: incomingText,
                     time: new Date().toLocaleTimeString()
