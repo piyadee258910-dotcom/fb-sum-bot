@@ -24,13 +24,16 @@ async function loadDataFromGitHub() {
         db = JSON.parse(content);
         console.log("📥 โหลดข้อมูลจาก GitHub สำเร็จ!");
     } catch (err) {
-        console.log("⚠️ ยังไม่มีไฟล์ database.json บน GitHub หรือดึงข้อมูลไม่ได้");
+        console.log("⚠️ ยังไม่มีไฟล์ database.json บน GitHub (ระบบจะสร้างให้อัตโนมัติเมื่อมีการเพิ่มข้อมูล)");
     }
 }
 
-// 2. ฟังก์ชันบันทึกข้อมูลกลับขึ้น GitHub อัตโนมัติ
+// 2. ฟังก์ชันบันทึกข้อมูลกลับขึ้น GitHub อัตโนมัติ (บังคับสร้างไฟล์ถ้ายังไม่มี)
 async function saveToGitHub() {
-    if (!GITHUB_TOKEN) return;
+    if (!GITHUB_TOKEN) {
+        console.log("❌ ขาด GITHUB_TOKEN ทำให้ไม่สามารถบันทึกลง GitHub ได้");
+        return;
+    }
     try {
         let path = 'database.json';
         let contentBase64 = Buffer.from(JSON.stringify(db, null, 2)).toString('base64');
@@ -41,7 +44,9 @@ async function saveToGitHub() {
                 headers: { Authorization: `token ${GITHUB_TOKEN}` }
             });
             sha = fileRes.data.sha;
-        } catch (e) {}
+        } catch (e) {
+            console.log("ℹ️ สร้างไฟล์ database.json ใหม่ครั้งแรกบน GitHub");
+        }
 
         await axios.put(`https://api.github.com/repos/${GITHUB_REPO}/contents/${path}`, {
             message: 'Auto-update database.json via Bot',
@@ -56,24 +61,29 @@ async function saveToGitHub() {
     }
 }
 
-// สั่งให้ดึงข้อมูลจาก GitHub ทันทีที่เซิร์ฟเวอร์เริ่มทำงาน
+// โหลดข้อมูลตอนเริ่มระบบ
 loadDataFromGitHub();
 
-// ฟังก์ชันส่งข้อความทาง Messenger
+// ฟังก์ชันส่งข้อความทาง Messenger (ปรับปรุงการดัก Error)
 async function sendMessengerMessage(recipientId, messageText) {
     try {
+        if (!PAGE_ACCESS_TOKEN || PAGE_ACCESS_TOKEN === "your_page_access_token_here") {
+            console.log("⚠️ ยังไม่ได้ตั้งค่า PAGE_ACCESS_TOKEN บน Render ทำให้ส่งข้อความหาลูกค้าไม่ได้");
+            return;
+        }
         await axios.post(`https://graph.facebook.com/v21.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`, {
             recipient: { id: recipientId },
             message: { text: messageText }
         });
+        console.log("📤 ส่งข้อความหาลูกค้าสำเร็จ PSID:", recipientId);
     } catch (error) {
-        console.error("Error sending message:", error.response?.data || error.message);
+        console.error("❌ Error sending message:", error.response?.data || error.message);
     }
 }
 
 // 3. หน้าแรก
 app.get('/', (req, res) => {
-    res.send("Webhook server with GitHub Sync & Send Report Buttons is running! 🚀");
+    res.send("Webhook server is running successfully! 🚀");
 });
 
 // 4. หน้าแอดมินด่วน (/admin)
@@ -115,7 +125,7 @@ app.get('/admin', (req, res) => {
     `);
 });
 
-// 5. หน้าจัดการลูกค้า (/customer) พร้อมปุ่มส่งสรุปยอดรายวัน / ยอดทั้งหมด
+// 5. หน้าจัดการลูกค้า (/customer)
 app.get('/customer', (req, res) => {
     let htmlContent = '';
     for (let psid in db) {
@@ -229,7 +239,7 @@ app.get('/customer', (req, res) => {
     `);
 });
 
-// 6. API รองรับการจัดการข้อมูลลูกค้าทั้งหมด รวมถึงส่งรายงานทาง Messenger
+// 6. API จัดการข้อมูลและส่งข้อความ
 app.post('/customer-action', express.json(), async (req, res) => {
     let { action, psid, date, index, amount, type } = req.body;
     let today = new Date().toISOString().split('T')[0];
@@ -239,7 +249,14 @@ app.post('/customer-action', express.json(), async (req, res) => {
         if (!db[psid][today]) db[psid][today] = [];
         let timeNow = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
         db[psid][today].push({ time: timeNow, amount: amount });
-        res.send("เพิ่มยอดสำเร็จ!");
+        
+        // ส่งข้อความแจ้งยอดล่าสุดเข้าแชทลูกค้าทันทีที่เพิ่มยอดจากหน้าเว็บ
+        let total = db[psid][today].reduce((sum, item) => sum + item.amount, 0);
+        let listText = db[psid][today].map((item, idx) => `${idx + 1}. [${item.time}] +${item.amount}`).join('\n');
+        let reportMsg = `📅 [${today}] รายการประจำวัน:\n${listText}\n-------------------\n💰 ยอดรวมของวัน: ${total} บาท`;
+        await sendMessengerMessage(psid, reportMsg);
+
+        res.send("เพิ่มยอดและส่งข้อความหาลูกค้าสำเร็จ!");
     } else if (action === 'edit') {
         if (db[psid][date] && db[psid][date][index]) {
             db[psid][date][index].amount = amount;
@@ -275,7 +292,7 @@ app.post('/customer-action', express.json(), async (req, res) => {
                 let items = customerData[d];
                 let dTotal = items.reduce((sum, item) => sum + item.amount, 0);
                 grandTotal += dTotal;
-                fullText += `\n📅 วันที่ ${d}:\n` + items.map((item, idx) => `  - [${item.time}] +${item.amount}`).join('\n') + `\n  (ยอดรวมวันี้: ${dTotal})`;
+                fullText += `\n📅 วันที่ ${d}:\n` + items.map((item, idx) => `  - [${item.time}] +${item.amount}`).join('\n') + `\n  (ยอดรวมวันนี้: ${dTotal})`;
             }
             fullText += `\n-------------------\n💰 ยอดสะสมรวมทั้งหมด: ${grandTotal} บาท`;
             reportMessage = fullText;
@@ -290,7 +307,7 @@ app.post('/customer-action', express.json(), async (req, res) => {
     await saveToGitHub();
 });
 
-// 7. Webhook รับข้อความ Messenger
+// 7. Webhook รับข้อความ Messenger ปกติ
 app.post('/webhook', async (req, res) => {
     let body = req.body;
     if (body.object === 'page') {
@@ -316,7 +333,7 @@ app.post('/webhook', async (req, res) => {
 
                         let total = db[senderPSID][today].reduce((sum, item) => sum + item.amount, 0);
                         let listText = db[senderPSID][today].map((item, idx) => `${idx + 1}. [${item.time}] +${item.amount}`).join('\n');
-                        replyMessage = `📅 [${today}] รายการประจำวัน:\n${listText}\n-------------------\n💰 ยอดรวมของวัน: ${total}`;
+                        replyMessage = `📅 [${today}] รายการประจำวัน:\n${listText}\n-------------------\n💰 ยอดรวมของวัน: ${total} บาท`;
                     }
                 }
                 if (replyMessage) await sendMessengerMessage(senderPSID, replyMessage);
@@ -345,9 +362,9 @@ app.get('/admin-test', async (req, res) => {
         db[psid][today].push({ time: timeNow, amount: amount });
         await saveToGitHub();
 
-        let total = db[senderPSID][today].reduce((sum, item) => sum + item.amount, 0);
+        let total = db[psid][today].reduce((sum, item) => sum + item.amount, 0);
         let listText = db[psid][today].map((item, idx) => `${idx + 1}. [${item.time}] +${item.amount}`).join('\n');
-        replyMessage = `📅 [${today}] รายการประจำวัน:\n${listText}\n-------------------\n💰 ยอดรวมของวัน: ${total}`;
+        replyMessage = `📅 [${today}] รายการประจำวัน:\n${listText}\n-------------------\n💰 ยอดรวมของวัน: ${total} บาท`;
     } else {
         replyMessage = `⚙️ แอดมิน: ${text}`;
     }
