@@ -69,7 +69,7 @@ async function sendMessengerMessage(recipientId, messageText) {
     }
 }
 
-// ฟังก์ชันส่งรูปภาพทาง Messenger (แก้ไข URL ให้ถูกต้องแล้ว)
+// ฟังก์ชันส่งรูปภาพทาง Messenger
 async function sendMessengerImage(recipientId, imageUrl) {
     try {
         if (!PAGE_ACCESS_TOKEN || PAGE_ACCESS_TOKEN === "your_page_access_token_here") return;
@@ -192,14 +192,19 @@ app.get('/customer', (req, res) => {
                     </div>
                 </div>
 
-                <!-- ช่องพิมพ์ข้อความอิสระ และปุ่มส่งรูปภาพผ่าน GitHub -->
+                <!-- ช่องพิมพ์ข้อความอิสระ และปุ่มส่งรูปภาพแบบแยกโหมด -->
                 <div style="background: #eef2f7; padding: 10px; border-radius: 6px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
                     <input type="text" id="customMsg_${psid}" placeholder="💬 พิมพ์ข้อความอิสระ..." style="flex: 1; min-width: 200px; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px;">
                     <button onclick="sendCustomMessage('${psid}')" style="background: #007bff; color: white; border: none; padding: 8px 14px; border-radius: 4px; cursor: pointer; font-size: 14px; white-space: nowrap;">📨 ส่งข้อความ</button>
                     
-                    <div style="width: 100%; display: flex; gap: 8px; align-items: center; margin-top: 5px;">
-                        <input type="file" id="imageFiles_${psid}" accept="image/*" multiple style="flex: 1; font-size: 13px; padding: 4px; background: #fff; border: 1px solid #ccc; border-radius: 4px;">
-                        <button onclick="sendMultipleImagesViaGitHub('${psid}')" style="background: #28a745; color: white; border: none; padding: 8px 14px; border-radius: 4px; cursor: pointer; font-size: 14px; white-space: nowrap;">🖼️ อัปโหลดและส่งรูป</button>
+                    <div style="width: 100%; display: flex; gap: 8px; align-items: center; margin-top: 5px; flex-wrap: wrap;">
+                        <input type="file" id="imageFiles_${psid}" accept="image/*" multiple style="flex: 1; min-width: 220px; font-size: 13px; padding: 4px; background: #fff; border: 1px solid #ccc; border-radius: 4px;">
+                        
+                        <!-- ปุ่มเดิม: ส่งรูปต้นฉบับทันทีโดยไม่แก้ไขภาพ -->
+                        <button onclick="sendOriginalImagesViaGitHub('${psid}')" style="background: #198754; color: white; border: none; padding: 8px 14px; border-radius: 4px; cursor: pointer; font-size: 14px; white-space: nowrap;">🖼️ ส่งรูปภาพ (ไม่แก้ภาพ)</button>
+                        
+                        <!-- ปุ่มใหม่: แก้ไขราคาเป็น 0 บาท แล้วส่งทันที -->
+                        <button onclick="processAndSendZeroPrice('${psid}')" style="background: #d63384; color: white; border: none; padding: 8px 14px; border-radius: 4px; cursor: pointer; font-size: 14px; white-space: nowrap; font-weight: bold;">✨ แก้ไขราคา 0 บาท แล้วส่งทันที</button>
                     </div>
                 </div>
 
@@ -280,14 +285,14 @@ app.get('/customer', (req, res) => {
                     .then(res => res.text()).then(data => { alert(data); inputElem.value = ''; });
                 }
 
-                // ฟังก์ชันอัปโหลดรูปขึ้น GitHub แล้วส่งเข้าแชทีละรูป
-                async function sendMultipleImagesViaGitHub(psid) {
+                // ปุ่มเดิม: ส่งรูปต้นฉบับทันทีโดยไม่แก้ไขภาพ
+                async function sendOriginalImagesViaGitHub(psid) {
                     let fileInput = document.getElementById('imageFiles_' + psid);
                     if (fileInput.files.length === 0) {
                         alert("กรุณาเลือกไฟล์รูปภาพอย่างน้อย 1 รูปครับ");
                         return;
                     }
-                    alert("กำลังอัปโหลดและส่งรูปภาพ " + fileInput.files.length + " รูป กรุณารอสักครู่...");
+                    alert("กำลังอัปโหลดและส่งรูปภาพต้นฉบับ " + fileInput.files.length + " รูป กรุณารอสักครู่...");
 
                     for (let file of fileInput.files) {
                         await new Promise((resolve) => {
@@ -300,15 +305,95 @@ app.get('/customer', (req, res) => {
                                     body: JSON.stringify({ action: 'uploadAndSendImage', psid, filename: file.name, fileData: base64Data })
                                 })
                                 .then(res => res.text())
-                                .then(() => {
-                                    setTimeout(resolve, 800);
-                                })
+                                .then(() => { setTimeout(resolve, 800); })
                                 .catch(() => resolve());
                             };
                             reader.readAsDataURL(file);
                         });
                     }
-                    alert("อัปโหลดและส่งรูปภาพทั้งหมดสำเร็จเรียบร้อย!");
+                    alert("ส่งรูปภาพต้นฉบับทั้งหมดสำเร็จเรียบร้อย!");
+                    fileInput.value = '';
+                }
+
+                // ปุ่มใหม่: แก้ไขราคาเป็น 0 บาท แล้วส่งทันที
+                async function processAndSendZeroPrice(psid) {
+                    let fileInput = document.getElementById('imageFiles_' + psid);
+                    if (fileInput.files.length === 0) {
+                        alert("กรุณาเลือกไฟล์รูปภาพอย่างน้อย 1 รูปครับ");
+                        return;
+                    }
+                    alert("กำลังแก้ไขราคาเป็น 0 บาท และส่งภาพ " + fileInput.files.length + " รูป กรุณารอสักครู่...");
+
+                    for (let file of fileInput.files) {
+                        await new Promise((resolve) => {
+                            const reader = new FileReader();
+                            reader.onload = function(e) {
+                                const img = new Image();
+                                img.onload = function() {
+                                    const canvas = document.createElement('canvas');
+                                    const ctx = canvas.getContext('2d');
+                                    canvas.width = img.width;
+                                    canvas.height = img.height;
+                                    ctx.drawImage(img, 0, 0);
+
+                                    // คำนวณพิกัดกลบราคาเดิมตามโค้ดของคุณ
+                                    const sampleX = Math.round(img.width * 0.85); 
+                                    const sampleY = Math.round(img.height * 0.52);
+                                    const pixel = ctx.getImageData(sampleX, sampleY, 1, 1).data;
+                                    const bgColor = \`rgb(\${pixel[0]}, \${pixel[1]}, \${pixel[2]})\`;
+
+                                    const searchStartX = Math.round(img.width * 0.045);
+                                    const searchWidth = Math.round(img.width * 0.25);
+                                    const startY = Math.round(img.height * 0.48);
+                                    const endY = Math.round(img.height * 0.55);
+
+                                    let seatLabelY = -1;
+                                    const imgData = ctx.getImageData(0, 0, img.width, img.height).data;
+
+                                    for (let y = startY; y <= endY; y++) {
+                                        for (let x = searchStartX; x <= searchStartX + searchWidth; x++) {
+                                            const idx = (y * img.width + x) * 4;
+                                            if (imgData[idx] > 160 && imgData[idx + 1] > 160 && imgData[idx + 2] > 160) {
+                                                seatLabelY = y;
+                                                break;
+                                            }
+                                        }
+                                        if (seatLabelY !== -1) break;
+                                    }
+
+                                    let targetY = (seatLabelY !== -1) ? seatLabelY - (img.height * 0.035) : Math.round(img.height * 0.465);
+                                    const rectX = img.width * 0.045;
+                                    const rectWidth = img.width * 0.32;
+                                    const rectHeight = img.height * 0.030;
+
+                                    ctx.fillStyle = bgColor;
+                                    ctx.fillRect(rectX, targetY, rectWidth, rectHeight);
+
+                                    const fontSize = Math.round(img.height * 0.0135); 
+                                    ctx.font = \`bold \${fontSize}px 'Sukhumvit Set', 'Segoe UI', Tahoma, sans-serif\`;
+                                    ctx.fillStyle = '#E5A93C';
+                                    ctx.textBaseline = 'top';
+                                    ctx.fillText('0 บาท', rectX, targetY + (img.height * 0.005));
+
+                                    let cleanedDataUrl = canvas.toDataURL('image/png');
+                                    let base64Data = cleanedDataUrl.split(',')[1];
+                                    let fileNamePng = file.name.replace(/\\.[^/.]+$/, "") + ".png";
+
+                                    fetch('/customer-action', {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ action: 'uploadAndSendImage', psid, filename: fileNamePng, fileData: base64Data })
+                                    })
+                                    .then(res => res.text())
+                                    .then(() => { setTimeout(resolve, 800); })
+                                    .catch(() => resolve());
+                                };
+                                img.src = e.target.result;
+                            };
+                            reader.readAsDataURL(file);
+                        });
+                    }
+                    alert("แก้ไขราคาเป็น 0 บาท และส่งรูปภาพทั้งหมดสำเร็จเรียบร้อย!");
                     fileInput.value = '';
                 }
             </script>
