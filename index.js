@@ -67,7 +67,7 @@ app.get('/webhook', (req, res) => {
     }
 });
 
-// 2. ส่วนสำหรับรับข้อความแชทและปุ่มกด
+// 2. ส่วนสำหรับรับข้อความแชทและปุ่มกด (รองรับทั้งฝั่งลูกค้าและฝั่งเพจ/แอดมิน)
 app.post('/webhook', async (req, res) => {
     const body = req.body;
 
@@ -79,22 +79,36 @@ app.post('/webhook', async (req, res) => {
                     const recipientId = webhookEvent.recipient ? webhookEvent.recipient.id : null;
 
                     if (!senderId) continue;
-                    if (senderId === recipientId) continue;
 
-                    let targetChatId = senderId; 
+                    // เช็คว่าข้อความนี้ส่งมาจากเพจ (แอดมินพิมพ์) หรือไม่
+                    const isFromPage = (senderId === MY_PAGE_ID);
+
+                    // ถ้าแอดมิน/เพจส่งออกไป เป้าหมายแชท (Chat ID) คือฝั่ง recipient (ลูกค้าคนนั้น)
+                    // ถ้าลูกค้าส่งเข้ามา เป้าหมายแชทคือ senderId (ลูกค้าคนนั้น)
+                    let targetChatId = isFromPage ? recipientId : senderId; 
 
                     if (webhookEvent.message && webhookEvent.message.text) {
                         const messageText = webhookEvent.message.text.trim();
-                        console.log(`==> ได้รับข้อความ | Sender ID: ${targetChatId} | ข้อความ: ${messageText}`);
                         
-                        await processSumMessage(targetChatId, messageText, senderId);
+                        if (isFromPage) {
+                            console.log(`==> แอดมิน/เพจพิมพ์หาลูกค้า (${targetChatId}): ${messageText}`);
+                            
+                            // 💡 จุดเปิดให้บอทอ่านคำสั่งที่แอดมินพิมพ์ (รองรับเฉพาะคำสั่งที่ขึ้นต้นด้วย .. หรือคำสั่งเฉพาะ)
+                            // ป้องกันลูปโดยการเช็คว่าแอดมินพิมพ์คำสั่งบอทหรือไม่
+                            if (messageText.startsWith('..') || messageText === 'สรุป' || messageText === 'list' || messageText === 'sum' || messageText.toLowerCase() === 'clear') {
+                                await processSumMessage(targetChatId, messageText, targetChatId);
+                            }
+                        } else {
+                            console.log(`==> ลูกค้าส่งเข้ามา (${senderId}): ${messageText}`);
+                            await processSumMessage(targetChatId, messageText, senderId);
+                        }
                     }
 
                     if (webhookEvent.postback && webhookEvent.postback.payload) {
                         const payload = webhookEvent.postback.payload.trim();
-                        console.log(`==> ได้รับปุ่มกด (Postback) | Sender ID: ${targetChatId} | Payload: ${payload}`);
+                        console.log(`==> ได้รับปุ่มกด (Postback) | Chat ID: ${targetChatId} | Payload: ${payload}`);
 
-                        await processSumMessage(targetChatId, payload, senderId);
+                        await processSumMessage(targetChatId, payload, targetChatId);
                     }
                 }
             }
@@ -133,7 +147,7 @@ function parseDateInput(inputStr) {
     return inputStr; 
 }
 
-async function processSumMessage(chatId, messageText, senderId) {
+async function processSumMessage(chatId, messageText, responseTargetId) {
     const lowerText = messageText.toLowerCase();
     const now = new Date();
     const todayStr = now.toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
@@ -141,7 +155,7 @@ async function processSumMessage(chatId, messageText, senderId) {
 
     // 1. ถ้าพิมพ์จุด (.) ตัวเดียว ให้เด้งปุ่มเมนูโต้ตอบ
     if (messageText === '.') {
-        sendInteractiveMenu(senderId);
+        sendInteractiveMenu(responseTargetId);
         return;
     }
 
@@ -152,7 +166,7 @@ async function processSumMessage(chatId, messageText, senderId) {
             delete data[chatId];
             await saveGitHubFile(data, sha);
         }
-        sendMessengerMessage(senderId, `🗑️ รีเซ็ตยอดและรายการทั้งหมดเรียบร้อย | ยอดรวม: 0`);
+        sendMessengerMessage(responseTargetId, `🗑️ รีเซ็ตยอดและรายการทั้งหมดเรียบร้อย | ยอดรวม: 0`);
         return;
     }
 
@@ -164,7 +178,7 @@ async function processSumMessage(chatId, messageText, senderId) {
             delete data[chatId][targetDate];
             await saveGitHubFile(data, sha);
         }
-        sendMessengerMessage(senderId, `🗑️ ลบข้อมูลของวันที่ ${targetDate} เรียบร้อยแล้ว`);
+        sendMessengerMessage(responseTargetId, `🗑️ ลบข้อมูลของวันที่ ${targetDate} เรียบร้อยแล้ว`);
         return;
     }
 
@@ -172,7 +186,7 @@ async function processSumMessage(chatId, messageText, senderId) {
     if (lowerText === 'list' || lowerText === 'sum' || lowerText === 'ยอดรวมทั้งหมด') {
         const { data } = await getGitHubFile();
         if (!data[chatId] || Object.keys(data[chatId]).length === 0) {
-            sendMessengerMessage(senderId, `📅 ยังไม่มีรายการค้างในระบบ`);
+            sendMessengerMessage(responseTargetId, `📅 ยังไม่มีรายการค้างในระบบ`);
             return;
         }
 
@@ -189,14 +203,14 @@ async function processSumMessage(chatId, messageText, senderId) {
             }
         }
         replyText += `-------------------\n💰 ยอดรวมสุทธิทุกวัน: ${grandTotal}`;
-        sendMessengerMessage(senderId, replyText);
+        sendMessengerMessage(responseTargetId, replyText);
         return;
     }
 
     // 5. SUM เฉพาะวัน หรือพิมพ์ "สรุป"
     if (lowerText.startsWith('sum ') || lowerText === 'สรุป') {
         const targetDate = (messageText === 'สรุป') ? todayStr : parseDateInput(messageText.split(/\s+/)[1]);
-        sendSpecificDateSummary(chatId, targetDate, senderId);
+        sendSpecificDateSummary(chatId, targetDate, responseTargetId);
         return;
     }
 
@@ -209,12 +223,12 @@ async function processSumMessage(chatId, messageText, senderId) {
             dayData.total = dayData.items.reduce((sum, item) => sum + item.amount, 0);
 
             await saveDayData(chatId, todayStr, dayData);
-            sendSpecificDateSummary(chatId, todayStr, senderId);
+            sendSpecificDateSummary(chatId, todayStr, responseTargetId);
         }
     }
 }
 
-async function sendSpecificDateSummary(chatId, dateStr, senderId) {
+async function sendSpecificDateSummary(chatId, dateStr, responseTargetId) {
     const dayData = await getDayData(chatId, dateStr);
     let replyText = `📅 [${dateStr}] รายการประจำวัน:\n`;
 
@@ -226,7 +240,7 @@ async function sendSpecificDateSummary(chatId, dateStr, senderId) {
         });
         replyText += `-------------------\n💰 ยอดรวมของวัน: ${dayData.total}`;
     }
-    sendMessengerMessage(senderId, replyText);
+    sendMessengerMessage(responseTargetId, replyText);
 }
 
 function sendInteractiveMenu(recipientId) {
