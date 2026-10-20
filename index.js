@@ -8,7 +8,7 @@ app.use(bodyParser.json());
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "your_verify_token_here";
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN || "your_page_access_token_here";
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN; 
-const GITHUB_REPO = process.env.GITHUB_REPO || "piyadee258910-dotcom/fb-sum-bot";
+const GITHUB_REPO = process.env.GITHUB_REPO || "piyadee258910-dotcom/fb-sum-bot"; 
 
 let db = {};
 let recentCustomers = {};
@@ -28,7 +28,7 @@ async function loadDataFromGitHub() {
     }
 }
 
-// 2. ฟังก์ชันบันทึกข้อมูลกลับขึ้น GitHub อัตโนมัติ (บังคับสร้างไฟล์ถ้ายังไม่มี)
+// 2. ฟังก์ชันบันทึกข้อมูลกลับขึ้น GitHub อัตโนมัติ
 async function saveToGitHub() {
     if (!GITHUB_TOKEN) {
         console.log("❌ ขาด GITHUB_TOKEN ทำให้ไม่สามารถบันทึกลง GitHub ได้");
@@ -61,10 +61,9 @@ async function saveToGitHub() {
     }
 }
 
-// โหลดข้อมูลตอนเริ่มระบบ
 loadDataFromGitHub();
 
-// ฟังก์ชันส่งข้อความทาง Messenger (ปรับปรุงการดัก Error)
+// ฟังก์ชันส่งข้อความทาง Messenger
 async function sendMessengerMessage(recipientId, messageText) {
     try {
         if (!PAGE_ACCESS_TOKEN || PAGE_ACCESS_TOKEN === "your_page_access_token_here") {
@@ -130,11 +129,15 @@ app.get('/customer', (req, res) => {
     let htmlContent = '';
     for (let psid in db) {
         let customerData = db[psid];
+        let customerName = customerData.name || "ยังไม่ได้ตั้งชื่อเล่น";
         let totalAllDays = 0;
         let detailsHTML = '';
 
         for (let date in customerData) {
+            if (date === 'name') continue; // ข้ามฟิลด์ที่เป็นชื่อเล่น
             let items = customerData[date];
+            if (!Array.isArray(items)) continue;
+
             let dayTotal = items.reduce((sum, item) => sum + item.amount, 0);
             totalAllDays += dayTotal;
 
@@ -166,10 +169,12 @@ app.get('/customer', (req, res) => {
             <div style="background: #fff; padding: 20px; margin-bottom: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
                 <div style="display: flex; justify-content: space-between; align-items: center;">
                     <div>
-                        <h3 style="margin: 0; color: #333;">👤 PSID: ${psid} ${psid === '28921055437528917' ? '⭐ (พี่บอย)' : ''}</h3>
+                        <h3 style="margin: 0; color: #333;">👤 ชื่อเล่น: <span style="color: #007bff;">${customerName}</span></h3>
+                        <p style="margin: 4px 0 0 0; color: #888; font-size: 12px;">PSID: ${psid}</p>
                         <p style="margin: 5px 0 0 0; color: #666; font-size: 14px;">ยอดสะสมรวมทั้งหมด: <strong>${totalAllDays} บาท</strong></p>
                     </div>
                     <div>
+                        <button onclick="setName('${psid}', '${customerName === 'ยังไม่ได้ตั้งชื่อเล่น' ? '' : customerName}')" style="background: #17a2b8; color: white; border: none; padding: 8px 12px; border-radius: 5px; cursor: pointer; margin-right: 5px;">✏️ ตั้งชื่อเล่น</button>
                         <button onclick="sendReport('${psid}', 'all', '')" style="background: #6610f2; color: white; border: none; padding: 8px 12px; border-radius: 5px; cursor: pointer; margin-right: 5px;">📨 ส่งยอดทั้งหมด</button>
                         <button onclick="addAmount('${psid}')" style="background: #28a745; color: white; border: none; padding: 8px 12px; border-radius: 5px; cursor: pointer; margin-right: 5px;">+ เพิ่มยอด</button>
                         <button onclick="clearAllCustomer('${psid}')" style="background: #343a40; color: white; border: none; padding: 8px 12px; border-radius: 5px; cursor: pointer;">🔥 ล้างทั้งหมด</button>
@@ -194,6 +199,13 @@ app.get('/customer', (req, res) => {
             <hr style="margin-bottom: 20px; border: 0; border-top: 1px solid #ccc;">
             ${htmlContent}
             <script>
+                function setName(psid, currentName) {
+                    let name = prompt("กรอกชื่อเล่นของลูกค้า:", currentName === 'ยังไม่ได้ตั้งชื่อเล่น' ? '' : currentName);
+                    if (name !== null) {
+                        fetch('/customer-action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'setName', psid, name }) })
+                        .then(res => res.text()).then(data => { alert(data); location.reload(); });
+                    }
+                }
                 function addAmount(psid) {
                     let amount = prompt("กรอกจำนวนเงินที่ต้องการเพิ่ม:");
                     if (amount && !isNaN(amount)) {
@@ -239,18 +251,28 @@ app.get('/customer', (req, res) => {
     `);
 });
 
+// ฟังก์ชันช่วยจัดเรียงรายการในแต่ละวันตามเวลา
+function sortItemsByTime(itemsArray) {
+    return itemsArray.sort((a, b) => a.time.localeCompare(b.time));
+}
+
 // 6. API จัดการข้อมูลและส่งข้อความ
 app.post('/customer-action', express.json(), async (req, res) => {
-    let { action, psid, date, index, amount, type } = req.body;
+    let { action, psid, date, index, amount, type, name } = req.body;
     let today = new Date().toISOString().split('T')[0];
     if (!db[psid]) db[psid] = {};
 
-    if (action === 'add') {
+    let timeNow = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+
+    if (action === 'setName') {
+        db[psid].name = name;
+        res.send("บันทึกชื่อเล่นสำเร็จ!");
+    } else if (action === 'add') {
         if (!db[psid][today]) db[psid][today] = [];
-        let timeNow = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
         db[psid][today].push({ time: timeNow, amount: amount });
         
-        // ส่งข้อความแจ้งยอดล่าสุดเข้าแชทลูกค้าทันทีที่เพิ่มยอดจากหน้าเว็บ
+        sortItemsByTime(db[psid][today]);
+
         let total = db[psid][today].reduce((sum, item) => sum + item.amount, 0);
         let listText = db[psid][today].map((item, idx) => `${idx + 1}. [${item.time}] +${item.amount}`).join('\n');
         let reportMsg = `📅 [${today}] รายการประจำวัน:\n${listText}\n-------------------\n💰 ยอดรวมของวัน: ${total} บาท`;
@@ -260,7 +282,9 @@ app.post('/customer-action', express.json(), async (req, res) => {
     } else if (action === 'edit') {
         if (db[psid][date] && db[psid][date][index]) {
             db[psid][date][index].amount = amount;
-            res.send("แก้ไขข้อมูลสำเร็จ!");
+            db[psid][date][index].time = timeNow;
+            sortItemsByTime(db[psid][date]);
+            res.send("แก้ไขข้อมูลและอัปเดตเวลาเรียบร้อย!");
         } else { return res.status(400).send("ไม่พบรายการ"); }
     } else if (action === 'delete') {
         if (db[psid][date] && db[psid][date][index] !== undefined) {
@@ -289,7 +313,9 @@ app.post('/customer-action', express.json(), async (req, res) => {
             let grandTotal = 0;
             let fullText = `📊 สรุปรายการยอดซื้อทั้งหมดของคุณ:\n`;
             for (let d in customerData) {
+                if (d === 'name') continue;
                 let items = customerData[d];
+                if (!Array.isArray(items)) continue;
                 let dTotal = items.reduce((sum, item) => sum + item.amount, 0);
                 grandTotal += dTotal;
                 fullText += `\n📅 วันที่ ${d}:\n` + items.map((item, idx) => `  - [${item.time}] +${item.amount}`).join('\n') + `\n  (ยอดรวมวันนี้: ${dTotal})`;
@@ -329,6 +355,8 @@ app.post('/webhook', async (req, res) => {
                     if (!isNaN(amount)) {
                         let timeNow = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
                         db[senderPSID][today].push({ time: timeNow, amount: amount });
+                        
+                        sortItemsByTime(db[senderPSID][today]);
                         await saveToGitHub();
 
                         let total = db[senderPSID][today].reduce((sum, item) => sum + item.amount, 0);
@@ -360,6 +388,8 @@ app.get('/admin-test', async (req, res) => {
     if (!isNaN(amount)) {
         let timeNow = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
         db[psid][today].push({ time: timeNow, amount: amount });
+        
+        sortItemsByTime(db[psid][today]);
         await saveToGitHub();
 
         let total = db[psid][today].reduce((sum, item) => sum + item.amount, 0);
