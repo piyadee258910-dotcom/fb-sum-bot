@@ -7,8 +7,8 @@ app.use(bodyParser.json());
 
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "your_verify_token_here";
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN || "your_page_access_token_here";
-const GITHUB_TOKEN = process.env.GITHUB_TOKEN; // Token สำหรับเชื่อมต่อ GitHub
-const GITHUB_REPO = process.env.GITHUB_REPO || "piyadee258910-dotcom/fb-sum-bot"; // ชื่อ Repo ของคุณ
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN; 
+const GITHUB_REPO = process.env.GITHUB_REPO || "piyadee258910-dotcom/fb-sum-bot"; 
 
 let db = {};
 let recentCustomers = {};
@@ -24,7 +24,7 @@ async function loadDataFromGitHub() {
         db = JSON.parse(content);
         console.log("📥 โหลดข้อมูลจาก GitHub สำเร็จ!");
     } catch (err) {
-        console.log("⚠️ ยังไม่มีไฟล์ database.json บน GitHub หรือดึงข้อมูลไม่ได้ (เริ่มระบบด้วยข้อมูลเปล่า)");
+        console.log("⚠️ ยังไม่มีไฟล์ database.json บน GitHub หรือดึงข้อมูลไม่ได้");
     }
 }
 
@@ -56,7 +56,7 @@ async function saveToGitHub() {
     }
 }
 
-// โหลดข้อมูลทันทีเมื่อเซิร์ฟเวอร์เริ่มทำงาน
+// สั่งให้ดึงข้อมูลจาก GitHub ทันทีที่เซิร์ฟเวอร์เริ่มทำงาน
 loadDataFromGitHub();
 
 // ฟังก์ชันส่งข้อความทาง Messenger
@@ -73,7 +73,7 @@ async function sendMessengerMessage(recipientId, messageText) {
 
 // 3. หน้าแรก
 app.get('/', (req, res) => {
-    res.send("Webhook server with GitHub Sync & Clear Buttons is running! 🚀");
+    res.send("Webhook server with GitHub Sync & Send Report Buttons is running! 🚀");
 });
 
 // 4. หน้าแอดมินด่วน (/admin)
@@ -115,7 +115,7 @@ app.get('/admin', (req, res) => {
     `);
 });
 
-// 5. หน้าจัดการลูกค้า (/customer) พร้อมปุ่มเคลียร์รายวัน / เคลียร์ทั้งหมด
+// 5. หน้าจัดการลูกค้า (/customer) พร้อมปุ่มส่งสรุปยอดรายวัน / ยอดทั้งหมด
 app.get('/customer', (req, res) => {
     let htmlContent = '';
     for (let psid in db) {
@@ -142,7 +142,10 @@ app.get('/customer', (req, res) => {
                 <div style="background: #f9f9f9; padding: 10px; margin-top: 8px; border-radius: 6px; border-left: 4px solid #007bff;">
                     <div style="display: flex; justify-content: space-between; align-items: center;">
                         <strong>📅 วันที่: ${date}</strong> (ยอดวันนี้: ${dayTotal})
-                        <button onclick="clearDay('${psid}', '${date}')" style="background: #ff851b; color: white; border: none; padding: 3px 6px; border-radius: 4px; cursor: pointer; font-size: 11px;">🗑️ เคลียร์ยอดวันนึ้</button>
+                        <div>
+                            <button onclick="sendReport('${psid}', 'daily', '${date}')" style="background: #17a2b8; color: white; border: none; padding: 3px 6px; border-radius: 4px; cursor: pointer; font-size: 11px; margin-right: 4px;">📤 ส่งยอดรายวัน</button>
+                            <button onclick="clearDay('${psid}', '${date}')" style="background: #ff851b; color: white; border: none; padding: 3px 6px; border-radius: 4px; cursor: pointer; font-size: 11px;">🗑️ เคลียร์วันนึ้</button>
+                        </div>
                     </div>
                     <ul style="padding-left: 20px; margin: 5px 0 0 0;">${itemsList || '<li>ไม่มีรายการ</li>'}</ul>
                 </div>
@@ -157,8 +160,9 @@ app.get('/customer', (req, res) => {
                         <p style="margin: 5px 0 0 0; color: #666; font-size: 14px;">ยอดสะสมรวมทั้งหมด: <strong>${totalAllDays} บาท</strong></p>
                     </div>
                     <div>
+                        <button onclick="sendReport('${psid}', 'all', '')" style="background: #6610f2; color: white; border: none; padding: 8px 12px; border-radius: 5px; cursor: pointer; margin-right: 5px;">📨 ส่งยอดทั้งหมด</button>
                         <button onclick="addAmount('${psid}')" style="background: #28a745; color: white; border: none; padding: 8px 12px; border-radius: 5px; cursor: pointer; margin-right: 5px;">+ เพิ่มยอด</button>
-                        <button onclick="clearAllCustomer('${psid}')" style="background: #343a40; color: white; border: none; padding: 8px 12px; border-radius: 5px; cursor: pointer;">🔥 ล้างข้อมูลทั้งหมด</button>
+                        <button onclick="clearAllCustomer('${psid}')" style="background: #343a40; color: white; border: none; padding: 8px 12px; border-radius: 5px; cursor: pointer;">🔥 ล้างทั้งหมด</button>
                     </div>
                 </div>
                 ${detailsHTML}
@@ -212,15 +216,22 @@ app.get('/customer', (req, res) => {
                         .then(res => res.text()).then(data => { alert(data); location.reload(); });
                     }
                 }
+                function sendReport(psid, type, date) {
+                    let msg = type === 'daily' ? ('ต้องการส่งสรุปยอดวันที่ ' + date + ' ไปหาลูกค้าใช่หรือไม่?') : ('ต้องการส่งสรุปยอดสะสมทั้งหมดไปหาลูกค้าใช่หรือไม่?');
+                    if (confirm(msg)) {
+                        fetch('/customer-action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'sendReport', psid, type, date }) })
+                        .then(res => res.text()).then(data => { alert(data); });
+                    }
+                }
             </script>
         </body>
         </html>
     `);
 });
 
-// 6. API รองรับการจัดการข้อมูลลูกค้าทั้งหมด (เพิ่ม, แก้ไข, ลบ, เคลียร์รายวัน, เคลียร์ทั้งหมด)
+// 6. API รองรับการจัดการข้อมูลลูกค้าทั้งหมด รวมถึงส่งรายงานทาง Messenger
 app.post('/customer-action', express.json(), async (req, res) => {
-    let { action, psid, date, index, amount } = req.body;
+    let { action, psid, date, index, amount, type } = req.body;
     let today = new Date().toISOString().split('T')[0];
     if (!db[psid]) db[psid] = {};
 
@@ -245,9 +256,36 @@ app.post('/customer-action', express.json(), async (req, res) => {
             res.send("เคลียร์ยอดประจำวันสำเร็จ!");
         } else { return res.status(400).send("ไม่พบข้อมูลวันที่ต้องการเคลียร์"); }
     } else if (action === 'clearAll') {
-        delete db[psid]; // ลบข้อมูลลูกค้ารายนี้ออกทั้งหมด
+        delete db[psid];
         res.send("ลบข้อมูลทั้งหมดของลูกค้ารายนี้เรียบร้อยแล้ว!");
-    } else { return res.status(400).send("Action ไม่ถูกต้อง"); }
+    } else if (action === 'sendReport') {
+        let customerData = db[psid];
+        if (!customerData) return res.status(400).send("ไม่พบข้อมูลลูกค้า");
+
+        let reportMessage = "";
+        if (type === 'daily') {
+            let items = customerData[date] || [];
+            let dayTotal = items.reduce((sum, item) => sum + item.amount, 0);
+            let listText = items.map((item, idx) => `${idx + 1}. [${item.time}] +${item.amount}`).join('\n');
+            reportMessage = `📅 สรุปยอดประจำวัน [${date}]:\n${listText || 'ไม่มีรายการ'}\n-------------------\n💰 ยอดรวมของวัน: ${dayTotal} บาท`;
+        } else if (type === 'all') {
+            let grandTotal = 0;
+            let fullText = `📊 สรุปรายการยอดซื้อทั้งหมดของคุณ:\n`;
+            for (let d in customerData) {
+                let items = customerData[d];
+                let dTotal = items.reduce((sum, item) => sum + item.amount, 0);
+                grandTotal += dTotal;
+                fullText += `\n📅 วันที่ ${d}:\n` + items.map((item, idx) => `  - [${item.time}] +${item.amount}`).join('\n') + `\n  (ยอดรวมวันี้: ${dTotal})`;
+            }
+            fullText += `\n-------------------\n💰 ยอดสะสมรวมทั้งหมด: ${grandTotal} บาท`;
+            reportMessage = fullText;
+        }
+
+        await sendMessengerMessage(psid, reportMessage);
+        return res.send("ส่งรายงานสรุปยอดไปหาลูกค้าทาง Messenger สำเร็จ!");
+    } else { 
+        return res.status(400).send("Action ไม่ถูกต้อง"); 
+    }
 
     await saveToGitHub();
 });
@@ -274,7 +312,7 @@ app.post('/webhook', async (req, res) => {
                     if (!isNaN(amount)) {
                         let timeNow = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
                         db[senderPSID][today].push({ time: timeNow, amount: amount });
-                        await saveToGitHub(); // เซฟลง GitHub ทันที
+                        await saveToGitHub();
 
                         let total = db[senderPSID][today].reduce((sum, item) => sum + item.amount, 0);
                         let listText = db[senderPSID][today].map((item, idx) => `${idx + 1}. [${item.time}] +${item.amount}`).join('\n');
@@ -305,9 +343,9 @@ app.get('/admin-test', async (req, res) => {
     if (!isNaN(amount)) {
         let timeNow = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
         db[psid][today].push({ time: timeNow, amount: amount });
-        await saveToGitHub(); // เซฟลง GitHub ทันที
+        await saveToGitHub();
 
-        let total = db[psid][today].reduce((sum, item) => sum + item.amount, 0);
+        let total = db[senderPSID][today].reduce((sum, item) => sum + item.amount, 0);
         let listText = db[psid][today].map((item, idx) => `${idx + 1}. [${item.time}] +${item.amount}`).join('\n');
         replyMessage = `📅 [${today}] รายการประจำวัน:\n${listText}\n-------------------\n💰 ยอดรวมของวัน: ${total}`;
     } else {
