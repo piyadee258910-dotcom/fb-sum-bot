@@ -8,7 +8,9 @@ app.use(bodyParser.json());
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "your_verify_token_here";
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN || "your_page_access_token_here";
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN; 
-const GITHUB_REPO = process.env.GITHUB_REPO || "piyadee258910-dotcom/fb-sum-bot"; 
+const GITHUB_OWNER = process.env.GITHUB_OWNER || "piyadee258910-dotcom";
+const GITHUB_REPO_NAME = process.env.GITHUB_REPO || "fb-sum-bot";
+const GITHUB_REPO = `${GITHUB_OWNER}/${GITHUB_REPO_NAME}`;
 
 let db = {};
 let recentCustomers = {};
