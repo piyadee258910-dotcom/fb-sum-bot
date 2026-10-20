@@ -7,13 +7,13 @@ app.use(bodyParser.json());
 
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "your_verify_token_here";
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN || "your_page_access_token_here";
-const GITHUB_TOKEN = process.env.GITHUB_TOKEN; // Token ของ GitHub
-const GITHUB_REPO = process.env.GITHUB_REPO || "piyadee258910-dotcom/fb-sum-bot"; // ชื่อ Repo เช่น username/repo
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN; // Token สำหรับเชื่อมต่อ GitHub
+const GITHUB_REPO = process.env.GITHUB_REPO || "piyadee258910-dotcom/fb-sum-bot"; // ชื่อ Repo ของคุณ
 
 let db = {};
 let recentCustomers = {};
 
-// ฟังก์ชันดึงข้อมูลจาก GitHub (ตอนเปิดเซิร์ฟเวอร์)
+// 1. ฟังก์ชันดึงข้อมูลจาก GitHub (ตอนเปิดเซิร์ฟเวอร์)
 async function loadDataFromGitHub() {
     try {
         if (!GITHUB_TOKEN) return;
@@ -28,14 +28,13 @@ async function loadDataFromGitHub() {
     }
 }
 
-// ฟังก์ชันบันทึกข้อมูลกลับขึ้น GitHub อัตโนมัติ
+// 2. ฟังก์ชันบันทึกข้อมูลกลับขึ้น GitHub อัตโนมัติ
 async function saveToGitHub() {
     if (!GITHUB_TOKEN) return;
     try {
         let path = 'database.json';
         let contentBase64 = Buffer.from(JSON.stringify(db, null, 2)).toString('base64');
         
-        // เช็ก SHA เดิมของไฟล์ก่อนอัปเดต (GitHub API ต้องการ)
         let sha = '';
         try {
             let fileRes = await axios.get(`https://api.github.com/repos/${GITHUB_REPO}/contents/${path}`, {
@@ -44,7 +43,6 @@ async function saveToGitHub() {
             sha = fileRes.data.sha;
         } catch (e) {}
 
-        // ส่งข้อมูล Commit กลับเข้า GitHub
         await axios.put(`https://api.github.com/repos/${GITHUB_REPO}/contents/${path}`, {
             message: 'Auto-update database.json via Bot',
             content: contentBase64,
@@ -73,12 +71,12 @@ async function sendMessengerMessage(recipientId, messageText) {
     }
 }
 
-// 1. หน้าแรก
+// 3. หน้าแรก
 app.get('/', (req, res) => {
-    res.send("Webhook server with GitHub Sync is running! 🚀");
+    res.send("Webhook server with GitHub Sync & Clear Buttons is running! 🚀");
 });
 
-// 2. หน้าแอดมินด่วน
+// 4. หน้าแอดมินด่วน (/admin)
 app.get('/admin', (req, res) => {
     let customerListHTML = '';
     for (let psid in recentCustomers) {
@@ -117,7 +115,7 @@ app.get('/admin', (req, res) => {
     `);
 });
 
-// 3. หน้าจัดการลูกค้า /customer
+// 5. หน้าจัดการลูกค้า (/customer) พร้อมปุ่มเคลียร์รายวัน / เคลียร์ทั้งหมด
 app.get('/customer', (req, res) => {
     let htmlContent = '';
     for (let psid in db) {
@@ -142,7 +140,10 @@ app.get('/customer', (req, res) => {
 
             detailsHTML += `
                 <div style="background: #f9f9f9; padding: 10px; margin-top: 8px; border-radius: 6px; border-left: 4px solid #007bff;">
-                    <strong>📅 วันที่: ${date}</strong> (ยอดวันนี้: ${dayTotal})
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <strong>📅 วันที่: ${date}</strong> (ยอดวันนี้: ${dayTotal})
+                        <button onclick="clearDay('${psid}', '${date}')" style="background: #ff851b; color: white; border: none; padding: 3px 6px; border-radius: 4px; cursor: pointer; font-size: 11px;">🗑️ เคลียร์ยอดวันนึ้</button>
+                    </div>
                     <ul style="padding-left: 20px; margin: 5px 0 0 0;">${itemsList || '<li>ไม่มีรายการ</li>'}</ul>
                 </div>
             `;
@@ -156,7 +157,8 @@ app.get('/customer', (req, res) => {
                         <p style="margin: 5px 0 0 0; color: #666; font-size: 14px;">ยอดสะสมรวมทั้งหมด: <strong>${totalAllDays} บาท</strong></p>
                     </div>
                     <div>
-                        <button onclick="addAmount('${psid}')" style="background: #28a745; color: white; border: none; padding: 8px 12px; border-radius: 5px; cursor: pointer;">+ เพิ่มยอด</button>
+                        <button onclick="addAmount('${psid}')" style="background: #28a745; color: white; border: none; padding: 8px 12px; border-radius: 5px; cursor: pointer; margin-right: 5px;">+ เพิ่มยอด</button>
+                        <button onclick="clearAllCustomer('${psid}')" style="background: #343a40; color: white; border: none; padding: 8px 12px; border-radius: 5px; cursor: pointer;">🔥 ล้างข้อมูลทั้งหมด</button>
                     </div>
                 </div>
                 ${detailsHTML}
@@ -198,13 +200,25 @@ app.get('/customer', (req, res) => {
                         .then(res => res.text()).then(data => { alert(data); location.reload(); });
                     }
                 }
+                function clearDay(psid, date) {
+                    if (confirm("ต้องการเคลียร์ยอดของวันที่ " + date + " ทั้งหมดใช่หรือไม่?")) {
+                        fetch('/customer-action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'clearDay', psid, date }) })
+                        .then(res => res.text()).then(data => { alert(data); location.reload(); });
+                    }
+                }
+                function clearAllCustomer(psid) {
+                    if (confirm("⚠️ คำเตือน: ต้องการลบข้อมูลและประวัติทั้งหมดของลูกค้ารายนี้ใช่หรือไม่?")) {
+                        fetch('/customer-action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'clearAll', psid }) })
+                        .then(res => res.text()).then(data => { alert(data); location.reload(); });
+                    }
+                }
             </script>
         </body>
         </html>
     `);
 });
 
-// API จัดการข้อมูลและสั่ง Push ขึ้น GitHub อัตโนมัติ
+// 6. API รองรับการจัดการข้อมูลลูกค้าทั้งหมด (เพิ่ม, แก้ไข, ลบ, เคลียร์รายวัน, เคลียร์ทั้งหมด)
 app.post('/customer-action', express.json(), async (req, res) => {
     let { action, psid, date, index, amount } = req.body;
     let today = new Date().toISOString().split('T')[0];
@@ -225,12 +239,20 @@ app.post('/customer-action', express.json(), async (req, res) => {
             db[psid][date].splice(index, 1);
             res.send("ลบรายการสำเร็จ!");
         } else { return res.status(400).send("ไม่พบรายการ"); }
+    } else if (action === 'clearDay') {
+        if (db[psid][date]) {
+            db[psid][date] = [];
+            res.send("เคลียร์ยอดประจำวันสำเร็จ!");
+        } else { return res.status(400).send("ไม่พบข้อมูลวันที่ต้องการเคลียร์"); }
+    } else if (action === 'clearAll') {
+        delete db[psid]; // ลบข้อมูลลูกค้ารายนี้ออกทั้งหมด
+        res.send("ลบข้อมูลทั้งหมดของลูกค้ารายนี้เรียบร้อยแล้ว!");
     } else { return res.status(400).send("Action ไม่ถูกต้อง"); }
 
     await saveToGitHub();
 });
 
-// Webhook รับข้อความ Messenger
+// 7. Webhook รับข้อความ Messenger
 app.post('/webhook', async (req, res) => {
     let body = req.body;
     if (body.object === 'page') {
@@ -268,7 +290,7 @@ app.post('/webhook', async (req, res) => {
     }
 });
 
-// ลิงก์ทดสอบด่วน /admin-test
+// 8. ลิงก์ทดสอบด่วน /admin-test
 app.get('/admin-test', async (req, res) => {
     let psid = req.query.id;
     let text = req.query.text;
@@ -298,5 +320,5 @@ app.get('/admin-test', async (req, res) => {
 
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-    console.log(`Webhook server with GitHub API sync is running on port ${PORT}`);
+    console.log(`Webhook server is running on port ${PORT}`);
 });
