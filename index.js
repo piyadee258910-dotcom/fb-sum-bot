@@ -9,21 +9,11 @@ app.use(bodyParser.json());
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "your_verify_token_here";
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN || "your_page_access_token_here";
 
-// เก็บข้อมูลยอดขายแยกตาม PSID และวันที่
+// ฐานข้อมูลในหน่วยความจำ (เก็บยอดแยกตาม PSID และวันที่)
 const db = {}; 
-// เก็บรายชื่อลูกค้าล่าสุดเพื่อให้หน้าแอดมินกดง่าย
 if (!global.recentCustomers) global.recentCustomers = {};
 
-// ฟังก์ชันแมป PSID ให้เป็นชื่อเล่นที่อ่านง่าย
-function getCustomerDisplayName(psid) {
-    const nameMap = {
-        "28515546574783938": "น้องบอล",
-        "28339410642427843": "มาดามแป้ง"
-    };
-    return nameMap[psid] || psid;
-}
-
-// ฟังก์ชันส่งข้อความกลับไปหาลูกค้าทาง Messenger
+// ฟังก์ชันส่งข้อความกลับหาลูกค้าทาง Messenger
 async function sendMessengerMessage(recipientId, messageText) {
     try {
         await axios.post(`https://graph.facebook.com/v21.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`, {
@@ -35,145 +25,145 @@ async function sendMessengerMessage(recipientId, messageText) {
     }
 }
 
-// 1. หน้าแรกของเซิร์ฟเวอร์
+// 1. หน้าแรก
 app.get('/', (req, res) => {
     res.send("Webhook server is running successfully! 🚀");
 });
 
-// 2. หน้าแอดมินแดชบอร์ด (/admin) พร้อมตารางแสดงรายการยอดขาย
+// 2. หน้าแอดมินด่วนเดิม (/admin)
 app.get('/admin', (req, res) => {
     let customerListHTML = '';
     const recentCustomers = global.recentCustomers;
-    let today = new Date().toISOString().split('T')[0];
     
     for (let psid in recentCustomers) {
         let cust = recentCustomers[psid];
-        let displayName = getCustomerDisplayName(psid);
-        
-        let totalToday = 0;
-        let itemsListHTML = '';
-
-        if (db[psid] && db[psid][today] && db[psid][today].length > 0) {
-            totalToday = db[psid][today].reduce((sum, item) => sum + item.amount, 0);
-            
-            // สร้างตารางแสดงรายการยอดขายของลูกค้ารายนี้
-            itemsListHTML = `
-                <table class="sales-table">
-                    <thead>
-                        <tr>
-                            <th>#</th>
-                            <th>เวลา</th>
-                            <th>ยอดเงิน</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-            `;
-            db[psid][today].forEach((item, idx) => {
-                itemsListHTML += `
-                    <tr>
-                        <td>${idx + 1}</td>
-                        <td>${item.time}</td>
-                        <td>+${item.amount.toLocaleString()}</td>
-                    </tr>
-                `;
-            });
-            itemsListHTML += `
-                    </tbody>
-                </table>
-            `;
-        } else {
-            itemsListHTML = `<p class="no-sales">ยังไม่มีรายการยอดขายในวันนี้</p>`;
-        }
-
         customerListHTML += `
-            <div class="customer-card">
-                <div class="customer-info">
-                    <strong>ชื่อลูกค้า:</strong> <span class="name-text">${displayName}</span> <br>
-                    <small style="color: #888;">PSID: ${psid}</small><br>
-                    <small class="last-msg">💬 ข้อความล่าสุด: ${cust.lastMessage || '-'}</small><br>
-                    <span class="badge-total">💰 ยอดรวมวันนี้: <strong>${totalToday.toLocaleString()}</strong> บาท</span>
+            <div style="background: #fff; padding: 15px; margin-bottom: 12px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <strong>PSID:</strong> ${psid} <br>
+                    <small style="color: #666;">ข้อความล่าสุด: ${cust.lastMessage || '-'}</small>
                 </div>
-                
-                <div class="sales-section">
-                    ${itemsListHTML}
-                </div>
-
-                <div class="action-buttons">
-                    <button class="btn btn-success" onclick="quickAction('${psid}', '..100')">+100</button>
-                    <button class="btn btn-primary" onclick="quickAction('${psid}', '..500')">+500</button>
-                    <button class="btn btn-warning" onclick="customPrompt('${psid}', '${displayName}')">กำหนดเอง</button>
-                    <button class="btn btn-danger" onclick="clearData('${psid}', '${displayName}')">ล้างยอด</button>
+                <div>
+                    <button onclick="quickAction('${psid}', '..100')" style="background: #28a745; color: white; border: none; padding: 8px 12px; border-radius: 5px; cursor: pointer; margin-right: 5px;">+100</button>
+                    <button onclick="quickAction('${psid}', '..500')" style="background: #007bff; color: white; border: none; padding: 8px 12px; border-radius: 5px; cursor: pointer; margin-right: 5px;">+500</button>
+                    <a href="/customer" style="background: #6c757d; color: white; text-decoration: none; padding: 8px 12px; border-radius: 5px; display: inline-block;">จัดการรายชื่อ</a>
                 </div>
             </div>
         `;
     }
 
-    if (Object.keys(recentCustomers).length === 0) {
-        customerListHTML = '<div class="empty-state">ยังไม่มีประวัติลูกค้าทักเข้ามาในระบบ ลองให้ลูกค้าทักข้อความมาใหม่อีกครั้งครับ 📭</div>';
+    res.send(`
+        <!DOCTYPE html>
+        <html>
+        <head><meta charset="utf-8"><title>Admin Quick Dashboard</title></head>
+        <body style="font-family: sans-serif; background: #f0f2f5; padding: 20px; max-width: 650px; margin: auto;">
+            <h2>🚀 แผงควบคุมด่วนแอดมิน</h2>
+            <p><a href="/customer" style="color: #007bff; font-weight: bold; text-decoration: none;">📋 ไปที่หน้าจัดการข้อมูลลูกค้าทั้งหมด (/customer)</a></p>
+            <hr style="margin-bottom: 20px; border: 0; border-top: 1px solid #ccc;">
+            ${customerListHTML || '<p style="color: #666;">ยังไม่มีประวัติลูกค้าทักเข้ามา</p>'}
+            <script>
+                function quickAction(psid, text) {
+                    fetch('/admin-test?id=' + psid + '&text=' + encodeURIComponent(text))
+                        .then(res => res.text()).then(data => { alert('สำเร็จ! ' + data); location.reload(); });
+                }
+            </script>
+        </body>
+        </html>
+    `);
+});
+
+// 3. หน้าใหม่ /customer (แสดงรายละเอียดรายชื่อ, รายการทั้งหมด, และปุ่มเพิ่ม/แก้ไข)
+app.get('/customer', (req, res) => {
+    let htmlContent = '';
+
+    for (let psid in db) {
+        let customerData = db[psid];
+        let totalAllDays = 0;
+        let detailsHTML = '';
+
+        for (let date in customerData) {
+            let items = customerData[date];
+            let dayTotal = items.reduce((sum, item) => sum + item.amount, 0);
+            totalAllDays += dayTotal;
+
+            let itemsList = items.map((item, idx) => `
+                <li style="margin-bottom: 5px; display: flex; justify-content: space-between; align-items: center;">
+                    <span>[${item.time}] +${item.amount}</span>
+                    <div>
+                        <button onclick="editItem('${psid}', '${date}', ${idx}, ${item.amount})" style="background: #ffc107; border: none; padding: 3px 8px; border-radius: 4px; cursor: pointer; font-size: 12px;">แก้ไข</button>
+                        <button onclick="deleteItem('${psid}', '${date}', ${idx})" style="background: #dc3545; color: white; border: none; padding: 3px 8px; border-radius: 4px; cursor: pointer; font-size: 12px; margin-left: 4px;">ลบ</button>
+                    </div>
+                </li>
+            `).join('');
+
+            detailsHTML += `
+                <div style="background: #f9f9f9; padding: 10px; margin-top: 8px; border-radius: 6px; border-left: 4px solid #007bff;">
+                    <strong>📅 วันที่: ${date}</strong> (ยอดวันี้: ${dayTotal})
+                    <ul style="padding-left: 20px; margin: 5px 0 0 0;">${itemsList || '<li>ไม่มีรายการ</li>'}</ul>
+                </div>
+            `;
+        }
+
+        htmlContent += `
+            <div style="background: #fff; padding: 20px; margin-bottom: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <h3 style="margin: 0; color: #333;">👤 PSID: ${psid} ${psid === '28921055437528917' ? '⭐ (พี่บอย)' : ''}</h3>
+                        <p style="margin: 5px 0 0 0; color: #666; font-size: 14px;">ยอดสะสมรวมทั้งหมด: <strong>${totalAllDays} บาท</strong></p>
+                    </div>
+                    <div>
+                        <button onclick="addAmount('${psid}')" style="background: #28a745; color: white; border: none; padding: 8px 12px; border-radius: 5px; cursor: pointer;">+ เพิ่มยอด</button>
+                    </div>
+                </div>
+                ${detailsHTML}
+            </div>
+        `;
+    }
+
+    if (Object.keys(db).length === 0) {
+        htmlContent = '<p style="text-align: center; color: #666; padding: 40px;">ยังไม่มีข้อมูลประวัติการทำรายการในระบบครับ (สามารถให้ลูกค้าพิมพ์คำสั่ง หรือจำลองผ่าน /admin-test ก่อนได้)</p>';
     }
 
     res.send(`
         <!DOCTYPE html>
         <html>
-        <head>
-            <meta charset="utf-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Admin Quick Dashboard</title>
-            <style>
-                body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f0f2f5; padding: 20px; max-width: 750px; margin: auto; color: #333; }
-                h2 { color: #1877f2; margin-bottom: 5px; }
-                p.sub-title { color: #65676b; margin-top: 0; }
-                .customer-card { background: #fff; padding: 18px; margin-bottom: 15px; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); display: flex; flex-direction: column; gap: 12px; }
-                .customer-info { word-break: break-all; }
-                .name-text { color: #1877f2; font-size: 1.1em; font-weight: bold; }
-                .last-msg { color: #65676b; display: inline-block; margin-top: 4px; }
-                .badge-total { display: inline-block; margin-top: 6px; color: #2e7d32; background: #e8f5e9; padding: 3px 8px; border-radius: 6px; font-size: 0.95em; }
-                
-                /* สไตล์ตารางยอดขาย */
-                .sales-section { margin-top: 5px; }
-                .sales-table { width: 100%; border-collapse: collapse; margin-top: 5px; font-size: 0.9em; }
-                .sales-table th, .sales-table td { border: 1px solid #e4e6eb; padding: 6px 10px; text-align: left; }
-                .sales-table th { background-color: #f7f8fa; color: #4b4f56; }
-                .no-sales { color: #8a8d91; font-size: 0.9em; font-style: italic; margin: 5px 0; }
-
-                .action-buttons { display: flex; flex-wrap: wrap; gap: 6px; border-top: 1px solid #eee; padding-top: 10px; }
-                .btn { border: none; padding: 8px 12px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 0.9em; transition: opacity 0.2s; }
-                .btn:hover { opacity: 0.85; }
-                .btn-success { background: #2e7d32; color: white; }
-                .btn-primary { background: #1877f2; color: white; }
-                .btn-warning { background: #ffc107; color: #000; }
-                .btn-danger { background: #dc3545; color: white; }
-                .empty-state { background: #fff; padding: 30px; text-align: center; border-radius: 10px; color: #65676b; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
-                hr { border: 0; border-top: 1px solid #ced0d4; margin-bottom: 20px; }
-            </style>
-        </head>
-        <body>
-            <h2>🚀 แผงควบคุมด่วนแอดมิน</h2>
-            <p class="sub-title">จัดการและบวกยอดขายส่งเข้าแชทลูกค้าผ่าน Messenger ได้ทันที</p>
-            <hr>
-            ${customerListHTML}
+        <head><meta charset="utf-8"><title>Customer Management - /customer</title></head>
+        <body style="font-family: sans-serif; background: #f0f2f5; padding: 20px; max-width: 800px; margin: auto;">
+            <h2>📋 ระบบจัดการข้อมูลลูกค้าและรายการทั้งหมด (/customer)</h2>
+            <p><a href="/admin" style="color: #007bff; text-decoration: none;">⬅️ กลับไปหน้าแอดมินด่วน</a></p>
+            <hr style="margin-bottom: 20px; border: 0; border-top: 1px solid #ccc;">
+            ${htmlContent}
 
             <script>
-                function quickAction(psid, text) {
-                    fetch('/admin-test?id=' + psid + '&text=' + encodeURIComponent(text))
-                        .then(res => res.text())
-                        .then(data => {
-                            location.reload();
-                        })
-                        .catch(err => alert('เกิดข้อผิดพลาด: ' + err));
-                }
-
-                function customPrompt(psid, name) {
-                    let cmd = prompt("กรอกยอดที่ต้องการบวกให้กับ " + name + " (เช่น 250 หรือ ..250):");
-                    if (cmd) {
-                        let formattedText = cmd.startsWith('.') ? cmd : '..' + cmd;
-                        quickAction(psid, formattedText);
+                function addAmount(psid) {
+                    let amount = prompt("กรอกจำนวนเงินที่ต้องการเพิ่ม (เช่น 100 หรือ 500):");
+                    if (amount && !isNaN(amount)) {
+                        fetch('/customer-action', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ action: 'add', psid: psid, amount: parseFloat(amount) })
+                        }).then(res => res.text()).then(data => { alert(data); location.reload(); });
                     }
                 }
 
-                function clearData(psid, name) {
-                    if (confirm("คุณต้องการล้างยอดขายประจำวันนี้ของ " + name + " ใช่หรือไม่?")) {
-                        quickAction(psid, 'clear');
+                function editItem(psid, date, index, oldAmount) {
+                    let newAmount = prompt("แก้ไขจำนวนเงินใหม่:", oldAmount);
+                    if (newAmount && !isNaN(newAmount)) {
+                        fetch('/customer-action', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ action: 'edit', psid: psid, date: date, index: index, amount: parseFloat(newAmount) })
+                        }).then(res => res.text()).then(data => { alert(data); location.reload(); });
+                    }
+                }
+
+                function deleteItem(psid, date, index) {
+                    if (confirm("ต้องการลบรายการนี้ใช่หรือไม่?")) {
+                        fetch('/customer-action', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ action: 'delete', psid: psid, date: date, index: index })
+                        }).then(res => res.text()).then(data => { alert(data); location.reload(); });
                     }
                 }
             </script>
@@ -182,26 +172,40 @@ app.get('/admin', (req, res) => {
     `);
 });
 
-// 3. Webhook Verify (สำหรับยืนยันกับ Meta)
-app.get('/webhook', (req, res) => {
-    let mode = req.query['hub.mode'];
-    let token = req.query['hub.verify_token'];
-    let challenge = req.query['hub.challenge'];
+// API รองรับการจัดการข้อมูลลูกค้า (เพิ่ม แก้ไข ลบ) จากหน้า /customer
+app.post('/customer-action', express.json(), (req, res) => {
+    let { action, psid, date, index, amount } = req.body;
+    let today = new Date().toISOString().split('T')[0];
 
-    if (mode && token) {
-        if (mode === 'subscribe' && token === VERIFY_TOKEN) {
-            console.log('WEBHOOK_VERIFIED');
-            res.status(200).send(challenge);
+    if (!db[psid]) db[psid] = {};
+
+    if (action === 'add') {
+        if (!db[psid][today]) db[psid][today] = [];
+        let timeNow = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+        db[psid][today].push({ time: timeNow, amount: amount });
+        res.send("เพิ่มยอดสำเร็จ!");
+    } else if (action === 'edit') {
+        if (db[psid][date] && db[psid][date][index]) {
+            db[psid][date][index].amount = amount;
+            res.send("แก้ไขข้อมูลสำเร็จ!");
         } else {
-            res.sendStatus(403);
+            res.status(400).send("ไม่พบรายการที่ต้องการแก้ไข");
         }
+    } else if (action === 'delete') {
+        if (db[psid][date] && db[psid][date][index] !== undefined) {
+            db[psid][date].splice(index, 1);
+            res.send("ลบรายการสำเร็จ!");
+        } else {
+            res.status(400).send("ไม่พบรายการที่ต้องการลบ");
+        }
+    } else {
+        res.status(400).send("Action ไม่ถูกต้อง");
     }
 });
 
-// 4. Webhook รับข้อความจาก Messenger (แก้ไขโครงสร้างปีกกาให้ถูกต้องเรียบร้อยแล้ว)
+// 4. Webhook รับข้อความ Messenger ปกติ
 app.post('/webhook', (req, res) => {
     let body = req.body;
-
     if (body.object === 'page') {
         body.entry.forEach(entry => {
             let webhook_event = entry.messaging[0];
@@ -209,40 +213,24 @@ app.post('/webhook', (req, res) => {
 
             if (webhook_event.message && webhook_event.message.text) {
                 let incomingText = webhook_event.message.text.trim();
-
-                // บันทึกเก็บไว้ในรายการล่าสุด
-                global.recentCustomers[senderPSID] = {
-                    lastMessage: incomingText,
-                    time: new Date().toLocaleTimeString()
-                };
+                global.recentCustomers[senderPSID] = { lastMessage: incomingText, time: new Date().toLocaleTimeString() };
 
                 let today = new Date().toISOString().split('T')[0];
                 if (!db[senderPSID]) db[senderPSID] = {};
                 if (!db[senderPSID][today]) db[senderPSID][today] = [];
 
                 let replyMessage = "";
-
                 if (incomingText.startsWith('.')) {
-                    let amountStr = incomingText.replace(/^\.+/, '');
-                    let amount = parseFloat(amountStr);
-
+                    let amount = parseFloat(incomingText.replace(/^\.+/, ''));
                     if (!isNaN(amount)) {
                         let timeNow = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
                         db[senderPSID][today].push({ time: timeNow, amount: amount });
-
                         let total = db[senderPSID][today].reduce((sum, item) => sum + item.amount, 0);
                         let listText = db[senderPSID][today].map((item, idx) => `${idx + 1}. [${item.time}] +${item.amount}`).join('\n');
                         replyMessage = `📅 [${today}] รายการประจำวัน:\n${listText}\n-------------------\n💰 ยอดรวมของวัน: ${total}`;
                     }
-                } 
-                else if (incomingText.toLowerCase().startsWith('clear')) {
-                    db[senderPSID][today] = [];
-                    replyMessage = `🗑️ ล้างข้อมูลของวันที่ ${today} เรียบร้อยแล้ว`;
                 }
-
-                if (replyMessage) {
-                    sendMessengerMessage(senderPSID, replyMessage);
-                }
+                if (replyMessage) sendMessengerMessage(senderPSID, replyMessage);
             }
         });
         res.status(200).send('EVENT_RECEIVED');
@@ -251,42 +239,33 @@ app.post('/webhook', (req, res) => {
     }
 });
 
-// 5. ลิงก์ทดสอบด่วนหลังบ้านผ่านเบราว์เซอร์ (/admin-test)
+// 5. ลิงก์ทดสอบด่วน /admin-test
 app.get('/admin-test', (req, res) => {
     let psid = req.query.id;
     let text = req.query.text;
-
-    if (!psid || !text) {
-        return res.send("❌ กรุณาระบุ ?id=PSID&text=ข้อความ ให้ครบถ้วน");
-    }
+    if (!psid || !text) return res.send("❌ กรุณาระบุ ?id=PSID&text=ข้อความ");
 
     let today = new Date().toISOString().split('T')[0];
     if (!db[psid]) db[psid] = {};
     if (!db[psid][today]) db[psid][today] = [];
 
+    let amount = parseFloat(text.replace(/^\.+/, ''));
     let replyMessage = "";
-
-    if (text.toLowerCase().startsWith('clear')) {
-        db[psid][today] = [];
-        replyMessage = `🗑️ ล้างข้อมูลยอดขายประจำวันที่ ${today} เรียบร้อยแล้ว`;
+    if (!isNaN(amount)) {
+        let timeNow = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+        db[psid][today].push({ time: timeNow, amount: amount });
+        let total = db[psid][today].reduce((sum, item) => sum + item.amount, 0);
+        let listText = db[psid][today].map((item, idx) => `${idx + 1}. [${item.time}] +${item.amount}`).join('\n');
+        replyMessage = `📅 [${today}] รายการประจำวัน:\n${listText}\n-------------------\n💰 ยอดรวมของวัน: ${total}`;
     } else {
-        let amount = parseFloat(text.replace(/^\.+/, ''));
-        if (!isNaN(amount)) {
-            let timeNow = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-            db[psid][today].push({ time: timeNow, amount: amount });
-
-            let total = db[psid][today].reduce((sum, item) => sum + item.amount, 0);
-            let listText = db[psid][today].map((item, idx) => `${idx + 1}. [${item.time}] +${item.amount}`).join('\n');
-            replyMessage = `📅 [${today}] รายการประจำวัน:\n${listText}\n-------------------\n💰 ยอดรวมของวัน: ${total}`;
-        } else {
-            replyMessage = `⚙️ แอดมินสั่งการ: ${text}`;
-        }
+        replyMessage = `⚙️ แอดมิน: ${text}`;
     }
 
     sendMessengerMessage(psid, replyMessage);
-    res.send(`✅ ทำรายการสำเร็จ`);
+    res.send(`✅ ดำเนินการให้ PSID: ${psid} เรียบร้อย!`);
 });
 
+// รันเซิร์ฟเวอร์
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
     console.log(`Webhook server is running on port ${PORT}`);
