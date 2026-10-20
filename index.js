@@ -67,7 +67,7 @@ app.get('/webhook', (req, res) => {
     }
 });
 
-// 2. ส่วนสำหรับรับข้อความแชท (รองรับทั้งลูกค้าส่งมา และแอดมินพิมพ์สั่งการ)
+// 2. ส่วนสำหรับรับข้อความแชท (รองรับทั้งลูกค้าส่งมา และแอดมินพิมพ์จากฝั่งเพจ)
 app.post('/webhook', async (req, res) => {
     const body = req.body;
 
@@ -82,27 +82,31 @@ app.post('/webhook', async (req, res) => {
                     const messageText = messageObj.text ? messageObj.text.trim() : '';
                     if (!messageText) continue;
 
-                    // กรณีที่ 1: แอดมินพิมพ์ส่งออกจากเพจ (Echo หรือ Sender เป็น ID ของเพจเรา)
-                    if (messageObj.is_echo || (webhookEvent.sender && webhookEvent.sender.id === MY_PAGE_ID)) {
-                        const targetChatId = webhookEvent.recipient ? webhookEvent.recipient.id : null;
-                        
-                        if (targetChatId) {
-                            console.log(`==> [Admin Action] เพจส่งออกไปหาลูกค้า (${targetChatId}): ${messageText}`);
-                            
-                            // ถ้าแอดมินพิมพ์คำสั่ง (เช่นเริ่มต้นด้วย .. หรือคำสั่งระบบ) ให้บอทบันทึกยอดให้ลูกค้ารายนี้ทันที
-                            if (messageText.startsWith('..') || messageText === 'สรุป' || messageText === 'list' || messageText === 'sum' || messageText.toLowerCase() === 'clear') {
-                                await processSumMessage(targetChatId, messageText, targetChatId);
-                            }
-                        }
-                        continue;
+                    let targetChatId = null;
+                    const senderId = webhookEvent.sender ? webhookEvent.sender.id : null;
+                    const recipientId = webhookEvent.recipient ? webhookEvent.recipient.id : null;
+
+                    // ตรวจสอบว่าข้อความมาจากฝั่งเพจส่งออกไป หรือลูกค้าส่งเข้ามา
+                    if (messageObj.is_echo || senderId === MY_PAGE_ID) {
+                        targetChatId = recipientId; // ถ้าแอดมินพิมพ์ เป้าหมายคือ ID ของลูกค้าในห้องแชทนั้น
+                        console.log(`==> [Admin Action] เพจส่งออกไปหาลูกค้า (${targetChatId}): ${messageText}`);
+                    } else {
+                        targetChatId = senderId; // ถ้าลูกค้าส่งมา เป้าหมายคือ ID ของลูกค้าคนนั้น
+                        console.log(`==> [Customer Message] ลูกค้า (${targetChatId}) ส่งเข้ามา: ${messageText}`);
                     }
 
-                    // กรณีที่ 2: ลูกค้าส่งข้อความเข้ามาปกติ
-                    const senderId = webhookEvent.sender ? webhookEvent.sender.id : null;
-                    if (!senderId) continue;
+                    if (!targetChatId || targetChatId === MY_PAGE_ID) continue;
 
-                    console.log(`==> [Customer Message] ลูกค้า (${senderId}) ส่งเข้ามา: ${messageText}`);
-                    await processSumMessage(senderId, messageText, senderId);
+                    // ถ้าข้อความเริ่มต้นด้วย .. หรือเป็นคำสั่งระบบ ให้บอททำงานทันที
+                    if (messageText.startsWith('..') || messageText === 'สรุป' || messageText === 'list' || messageText === 'sum' || messageText.toLowerCase() === 'clear' || messageText === '.') {
+                        await processSumMessage(targetChatId, messageText, targetChatId);
+                    }
+
+                    // รองรับกรณีลูกค้ากดปุ่ม Postback
+                    if (webhookEvent.postback && webhookEvent.postback.payload) {
+                        const payload = webhookEvent.postback.payload.trim();
+                        await processSumMessage(targetChatId, payload, targetChatId);
+                    }
                 }
             }
         }
