@@ -67,46 +67,42 @@ app.get('/webhook', (req, res) => {
     }
 });
 
-// 2. ส่วนสำหรับรับ Webhook (พร้อม Debug ข้อมูลดิบทั้งหมดเพื่อดูว่า Facebook ส่งอะไรมาบ้าง)
+// 2. ส่วนสำหรับรับข้อความแชท (รองรับทั้งลูกค้าส่งมา และแอดมินพิมพ์สั่งการ)
 app.post('/webhook', async (req, res) => {
     const body = req.body;
-
-    // พิมพ์ข้อมูลดิบทั้งหมดลงใน Logs ของ Render
-    console.log("📥 RAW WEBHOOK RECEIVED:", JSON.stringify(body, null, 2));
 
     if (body.object === 'page') {
         for (const entry of body.entry) {
             if (entry.messaging) {
                 for (const webhookEvent of entry.messaging) {
                     
-                    const senderId = webhookEvent.sender ? webhookEvent.sender.id : null;
-                    const recipientId = webhookEvent.recipient ? webhookEvent.recipient.id : null;
                     const messageObj = webhookEvent.message;
-
                     if (!messageObj) continue;
-                    const messageText = messageObj.text ? messageObj.text.trim() : '';
 
-                    // ตรวจจับกรณีข้อความฝั่งเพจส่งออกไป (Echo / แอดมินพิมพ์)
-                    if (messageObj.is_echo || senderId === MY_PAGE_ID) {
-                        console.log(`==> [Echo/Admin] เพจส่งออกไปหาลูกค้า (${recipientId}): ${messageText}`);
+                    const messageText = messageObj.text ? messageObj.text.trim() : '';
+                    if (!messageText) continue;
+
+                    // กรณีที่ 1: แอดมินพิมพ์ส่งออกจากเพจ (Echo หรือ Sender เป็น ID ของเพจเรา)
+                    if (messageObj.is_echo || (webhookEvent.sender && webhookEvent.sender.id === MY_PAGE_ID)) {
+                        const targetChatId = webhookEvent.recipient ? webhookEvent.recipient.id : null;
                         
-                        if (recipientId && messageText && messageText.startsWith('..')) {
-                            await processSumMessage(recipientId, messageText, recipientId);
+                        if (targetChatId) {
+                            console.log(`==> [Admin Action] เพจส่งออกไปหาลูกค้า (${targetChatId}): ${messageText}`);
+                            
+                            // ถ้าแอดมินพิมพ์คำสั่ง (เช่นเริ่มต้นด้วย .. หรือคำสั่งระบบ) ให้บอทบันทึกยอดให้ลูกค้ารายนี้ทันที
+                            if (messageText.startsWith('..') || messageText === 'สรุป' || messageText === 'list' || messageText === 'sum' || messageText.toLowerCase() === 'clear') {
+                                await processSumMessage(targetChatId, messageText, targetChatId);
+                            }
                         }
                         continue;
                     }
 
-                    // ข้อความปกติจากลูกค้า
-                    if (senderId && messageText) {
-                        console.log(`==> [Customer] ลูกค้าส่งเข้ามา (${senderId}): ${messageText}`);
-                        await processSumMessage(senderId, messageText, senderId);
-                    }
+                    // กรณีที่ 2: ลูกค้าส่งข้อความเข้ามาปกติ
+                    const senderId = webhookEvent.sender ? webhookEvent.sender.id : null;
+                    if (!senderId) continue;
 
-                    if (webhookEvent.postback && webhookEvent.postback.payload) {
-                        const payload = webhookEvent.postback.payload.trim();
-                        console.log(`==> [Postback] จากลูกค้า (${senderId}): ${payload}`);
-                        await processSumMessage(senderId, payload, senderId);
-                    }
+                    console.log(`==> [Customer Message] ลูกค้า (${senderId}) ส่งเข้ามา: ${messageText}`);
+                    await processSumMessage(senderId, messageText, senderId);
                 }
             }
         }
