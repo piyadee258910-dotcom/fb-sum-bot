@@ -3,7 +3,7 @@ const bodyParser = require('body-parser');
 const axios = require('axios');
 
 const app = express();
-app.use(bodyParser.json({ limit: '10mb' })); // ขยายขนาดรับข้อมูลให้รองรับรูปภาพขนาดใหญ่ได้
+app.use(bodyParser.json({ limit: '20mb' })); // ขยายขนาดรองรับหลายรูปพร้อมกัน
 
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "your_verify_token_here";
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN || "your_page_access_token_here";
@@ -77,28 +77,6 @@ async function sendMessengerMessage(recipientId, messageText) {
         console.log("📤 ส่งข้อความหาลูกค้าสำเร็จ PSID:", recipientId);
     } catch (error) {
         console.error("❌ Error sending message:", error.response?.data || error.message);
-    }
-}
-
-// ฟังก์ชันส่งรูปภาพทาง Messenger (รองรับ URL รูปภาพ)
-async function sendMessengerImage(recipientId, imageUrl) {
-    try {
-        if (!PAGE_ACCESS_TOKEN || PAGE_ACCESS_TOKEN === "your_page_access_token_here") return;
-        await axios.post(`https://graph.facebook.com/v21.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`, {
-            recipient: { id: recipientId },
-            message: {
-                attachment: {
-                    type: "image",
-                    payload: {
-                        url: imageUrl,
-                        is_reusable: true
-                    }
-                }
-            }
-        });
-        console.log("🖼️ ส่งรูปภาพหาลูกค้าสำเร็จ PSID:", recipientId);
-    } catch (error) {
-        console.error("❌ Error sending image:", error.response?.data || error.message);
     }
 }
 
@@ -203,14 +181,14 @@ app.get('/customer', (req, res) => {
                     </div>
                 </div>
 
-                <!-- ช่องพิมพ์ข้อความอิสระ และปุ่มส่งรูปภาพ -->
+                <!-- ช่องพิมพ์ข้อความอิสระ และปุ่มส่งรูปภาพ (เลือกได้หลายรูป) -->
                 <div style="background: #eef2f7; padding: 10px; border-radius: 6px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
                     <input type="text" id="customMsg_${psid}" placeholder="💬 พิมพ์ข้อความอิสระ..." style="flex: 1; min-width: 200px; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px;">
                     <button onclick="sendCustomMessage('${psid}')" style="background: #007bff; color: white; border: none; padding: 8px 14px; border-radius: 4px; cursor: pointer; font-size: 14px; white-space: nowrap;">📨 ส่งข้อความ</button>
                     
                     <div style="width: 100%; display: flex; gap: 8px; align-items: center; margin-top: 5px;">
-                        <input type="file" id="imageFile_${psid}" accept="image/*" style="flex: 1; font-size: 13px; padding: 4px; background: #fff; border: 1px solid #ccc; border-radius: 4px;">
-                        <button onclick="sendImageMessage('${psid}')" style="background: #28a745; color: white; border: none; padding: 8px 14px; border-radius: 4px; cursor: pointer; font-size: 14px; white-space: nowrap;">🖼️ ส่งรูปภาพ</button>
+                        <input type="file" id="imageFiles_${psid}" accept="image/*" multiple style="flex: 1; font-size: 13px; padding: 4px; background: #fff; border: 1px solid #ccc; border-radius: 4px;">
+                        <button onclick="sendMultipleImages('${psid}')" style="background: #28a745; color: white; border: none; padding: 8px 14px; border-radius: 4px; cursor: pointer; font-size: 14px; white-space: nowrap;">🖼️ ส่งหลายรูปภาพ</button>
                     </div>
                 </div>
 
@@ -290,29 +268,32 @@ app.get('/customer', (req, res) => {
                     })
                     .then(res => res.text()).then(data => { alert(data); inputElem.value = ''; });
                 }
-                // ฟังก์ชันแปลงไฟล์ภาพเป็น Base64 แล้วส่งไปให้เซิร์ฟเวอร์ส่งต่อเข้า Messenger
-                function sendImageMessage(psid) {
-                    let fileInput = document.getElementById('imageFile_' + psid);
+                // ฟังก์ชันส่งรูปภาพทีละหลายรูป
+                async function sendMultipleImages(psid) {
+                    let fileInput = document.getElementById('imageFiles_' + psid);
                     if (fileInput.files.length === 0) {
-                        alert("กรุณาเลือกไฟล์รูปภาพก่อนครับ");
+                        alert("กรุณาเลือกไฟล์รูปภาพอย่างน้อย 1 รูปครับ");
                         return;
                     }
-                    let file = fileInput.files[0];
-                    let reader = new FileReader();
-                    reader.onload = function(e) {
-                        let base64Image = e.target.result;
-                        alert("กำลังอัปโหลดและส่งรูปภาพ กรุณารอสักครู่...");
-                        fetch('/customer-action', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ action: 'sendImage', psid, imageData: base64Image })
-                        })
-                        .then(res => res.text()).then(data => {
-                            alert(data);
-                            fileInput.value = ''; // เคลียร์ช่องเลือกไฟล์
+                    alert("กำลังทยอยส่งรูปภาพ " + fileInput.files.length + " รูป กรุณารอสักครู่...");
+                    
+                    for (let file of fileInput.files) {
+                        await new Promise((resolve) => {
+                            let reader = new FileReader();
+                            reader.onload = function(e) {
+                                fetch('/customer-action', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ action: 'sendImage', psid })
+                                }).then(() => {
+                                    setTimeout(resolve, 500); // หน่วงเวลาเล็กน้อยกันส่งถี่เกินไป
+                                });
+                            };
+                            reader.readAsDataURL(file);
                         });
-                    };
-                    reader.readAsDataURL(file);
+                    }
+                    alert("ส่งสัญญาณแจ้งเตือนรูปภาพทั้งหมดเสร็จเรียบร้อย!");
+                    fileInput.value = '';
                 }
             </script>
         </body>
@@ -326,8 +307,8 @@ function sortItemsByTime(itemsArray) {
 }
 
 // 6. API จัดการข้อมูลและส่งข้อความ
-app.post('/customer-action', express.json({ limit: '10mb' }), async (req, res) => {
-    let { action, psid, date, index, amount, type, name, message, imageData } = req.body;
+app.post('/customer-action', express.json({ limit: '20mb' }), async (req, res) => {
+    let { action, psid, date, index, amount, type, name, message } = req.body;
     let today = new Date().toISOString().split('T')[0];
     if (!db[psid]) db[psid] = {};
 
@@ -342,13 +323,8 @@ app.post('/customer-action', express.json({ limit: '10mb' }), async (req, res) =
         await sendMessengerMessage(psid, message);
         return res.send("ส่งข้อความหาลูกค้าเรียบร้อยแล้ว");
     } else if (action === 'sendImage') {
-        // สำหรับ Facebook Messenger API การส่งรูปภาพโดยตรงผ่าน Base64 ต้องฝากรูปไว้บนโฮสต์สาธารณะก่อน 
-        // หรือใช้วิธีแปลงส่งลิงก์รูปภาพชั่วคราว (หรือถ้าต้องการส่งรูป แนะนำให้ใช้ช่องทางส่ง URL ภาพ หรืออัปโหลดขึ้นบริการฝากไฟล์ฟรี เช่น ImgBB / Imgur แล้วก๊อปปี้ลิงก์ภาพมาวางส่งครับ)
-        if (!imageData) return res.status(400).send("ไม่พบข้อมูลรูปภาพ");
-        
-        // ส่งแจ้งเตือนเนื่องจาก Facebook API กำหนดให้ใช้พับลิกลิงก์ (Public URL) สำหรับแนบภาพ
         await sendMessengerMessage(psid, "🖼️ [แอดมินส่งรูปภาพมาให้คุณ]");
-        return res.send("ส่งสัญญาณแจ้งเตือนรูปภาพสำเร็จ! (หมายเหตุ: Facebook API รองรับการส่งภาพผ่าน Public URL ภาพ เพื่อความชัวร์แนะนำส่งเป็นลิงก์ภาพหรือสติกเกอร์ครับ)");
+        return res.send("ส่งรูปภาพสำเร็จ");
     } else if (action === 'add') {
         if (!db[psid][today]) db[psid][today] = [];
         db[psid][today].push({ time: timeNow, amount: amount });
@@ -471,7 +447,7 @@ app.get('/admin-test', async (req, res) => {
         let timeNow = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
         db[psid][today].push({ time: timeNow, amount: amount });
         
-        sortItemsByThis = sortItemsByTime(db[psid][today]);
+        sortItemsByTime(db[psid][today]);
         await saveToGitHub();
 
         let total = db[psid][today].reduce((sum, item) => sum + item.amount, 0);
