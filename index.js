@@ -3,7 +3,7 @@ const bodyParser = require('body-parser');
 const axios = require('axios');
 
 const app = express();
-app.use(bodyParser.json({ limit: '20mb' })); // ขยายขนาดรองรับหลายรูปพร้อมกัน
+app.use(bodyParser.json({ limit: '20mb' })); // ขยายขนาดรับข้อมูลรูปภาพหลายรูป
 
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "your_verify_token_here";
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN || "your_page_access_token_here";
@@ -24,29 +24,23 @@ async function loadDataFromGitHub() {
         db = JSON.parse(content);
         console.log("📥 โหลดข้อมูลจาก GitHub สำเร็จ!");
     } catch (err) {
-        console.log("⚠️ ยังไม่มีไฟล์ database.json บน GitHub (ระบบจะสร้างให้อัตโนมัติเมื่อมีการเพิ่มข้อมูล)");
+        console.log("⚠️ ยังไม่มีไฟล์ database.json บน GitHub");
     }
 }
 
-// 2. ฟังก์ชันบันทึกข้อมูลกลับขึ้น GitHub อัตโนมัติ
+// 2. ฟังก์ชันบันทึกข้อมูล database.json ลง GitHub
 async function saveToGitHub() {
-    if (!GITHUB_TOKEN) {
-        console.log("❌ ขาด GITHUB_TOKEN ทำให้ไม่สามารถบันทึกลง GitHub ได้");
-        return;
-    }
+    if (!GITHUB_TOKEN) return;
     try {
         let path = 'database.json';
         let contentBase64 = Buffer.from(JSON.stringify(db, null, 2)).toString('base64');
-        
         let sha = '';
         try {
             let fileRes = await axios.get(`https://api.github.com/repos/${GITHUB_REPO}/contents/${path}`, {
                 headers: { Authorization: `token ${GITHUB_TOKEN}` }
             });
             sha = fileRes.data.sha;
-        } catch (e) {
-            console.log("ℹ️ สร้างไฟล์ database.json ใหม่ครั้งแรกบน GitHub");
-        }
+        } catch (e) {}
 
         await axios.put(`https://api.github.com/repos/${GITHUB_REPO}/contents/${path}`, {
             message: 'Auto-update database.json via Bot',
@@ -55,7 +49,6 @@ async function saveToGitHub() {
         }, {
             headers: { Authorization: `token ${GITHUB_TOKEN}` }
         });
-        console.log("📤 บันทึกข้อมูลลง GitHub สำเร็จ!");
     } catch (err) {
         console.error("❌ บันทึก GitHub ไม่สำเร็จ:", err.response?.data || err.message);
     }
@@ -66,17 +59,34 @@ loadDataFromGitHub();
 // ฟังก์ชันส่งข้อความตัวอักษรทาง Messenger
 async function sendMessengerMessage(recipientId, messageText) {
     try {
-        if (!PAGE_ACCESS_TOKEN || PAGE_ACCESS_TOKEN === "your_page_access_token_here") {
-            console.log("⚠️ ยังไม่ได้ตั้งค่า PAGE_ACCESS_TOKEN บน Render");
-            return;
-        }
+        if (!PAGE_ACCESS_TOKEN || PAGE_ACCESS_TOKEN === "your_page_access_token_here") return;
         await axios.post(`https://graph.facebook.com/v21.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`, {
             recipient: { id: recipientId },
             message: { text: messageText }
         });
-        console.log("📤 ส่งข้อความหาลูกค้าสำเร็จ PSID:", recipientId);
     } catch (error) {
         console.error("❌ Error sending message:", error.response?.data || error.message);
+    }
+}
+
+// ฟังก์ชันส่งรูปภาพทาง Messenger (ใช้ Public URL)
+async function sendMessengerImage(recipientId, imageUrl) {
+    try {
+        if (!PAGE_ACCESS_TOKEN || PAGE_ACCESS_TOKEN === "your_page_access_token_here") return;
+        await axios.post(`https://graph.facebook.0/v21.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`, {
+            recipient: { id: recipientId },
+            message: {
+                attachment: {
+                    type: "image",
+                    payload: {
+                        url: imageUrl,
+                        is_reusable: true
+                    }
+                }
+            }
+        });
+    } catch (error) {
+        console.error("❌ Error sending image:", error.response?.data || error.message);
     }
 }
 
@@ -181,14 +191,14 @@ app.get('/customer', (req, res) => {
                     </div>
                 </div>
 
-                <!-- ช่องพิมพ์ข้อความอิสระ และปุ่มส่งรูปภาพ (เลือกได้หลายรูป) -->
+                <!-- ช่องพิมพ์ข้อความอิสระ และปุ่มส่งรูปภาพผ่าน GitHub -->
                 <div style="background: #eef2f7; padding: 10px; border-radius: 6px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
                     <input type="text" id="customMsg_${psid}" placeholder="💬 พิมพ์ข้อความอิสระ..." style="flex: 1; min-width: 200px; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px;">
                     <button onclick="sendCustomMessage('${psid}')" style="background: #007bff; color: white; border: none; padding: 8px 14px; border-radius: 4px; cursor: pointer; font-size: 14px; white-space: nowrap;">📨 ส่งข้อความ</button>
                     
                     <div style="width: 100%; display: flex; gap: 8px; align-items: center; margin-top: 5px;">
                         <input type="file" id="imageFiles_${psid}" accept="image/*" multiple style="flex: 1; font-size: 13px; padding: 4px; background: #fff; border: 1px solid #ccc; border-radius: 4px;">
-                        <button onclick="sendMultipleImages('${psid}')" style="background: #28a745; color: white; border: none; padding: 8px 14px; border-radius: 4px; cursor: pointer; font-size: 14px; white-space: nowrap;">🖼️ ส่งหลายรูปภาพ</button>
+                        <button onclick="sendMultipleImagesViaGitHub('${psid}')" style="background: #28a745; color: white; border: none; padding: 8px 14px; border-radius: 4px; cursor: pointer; font-size: 14px; white-space: nowrap;">🖼️ อัปโหลดและส่งรูป</button>
                     </div>
                 </div>
 
@@ -268,31 +278,36 @@ app.get('/customer', (req, res) => {
                     })
                     .then(res => res.text()).then(data => { alert(data); inputElem.value = ''; });
                 }
-                // ฟังก์ชันส่งรูปภาพทีละหลายรูป
-                async function sendMultipleImages(psid) {
+
+                // ฟังก์ชันอัปโหลดรูปขึ้น GitHub แล้วส่งเข้าแชทีละรูป
+                async function sendMultipleImagesViaGitHub(psid) {
                     let fileInput = document.getElementById('imageFiles_' + psid);
                     if (fileInput.files.length === 0) {
                         alert("กรุณาเลือกไฟล์รูปภาพอย่างน้อย 1 รูปครับ");
                         return;
                     }
-                    alert("กำลังทยอยส่งรูปภาพ " + fileInput.files.length + " รูป กรุณารอสักครู่...");
-                    
+                    alert("กำลังอัปโหลดและส่งรูปภาพ " + fileInput.files.length + " รูป กรุณารอสักครู่...");
+
                     for (let file of fileInput.files) {
                         await new Promise((resolve) => {
                             let reader = new FileReader();
                             reader.onload = function(e) {
+                                let base64Data = e.target.result.split(',')[1]; // ตัด header ออกเอาเฉพาะ base64
                                 fetch('/customer-action', {
                                     method: 'POST',
                                     headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ action: 'sendImage', psid })
-                                }).then(() => {
-                                    setTimeout(resolve, 500); // หน่วงเวลาเล็กน้อยกันส่งถี่เกินไป
-                                });
+                                    body: JSON.stringify({ action: 'uploadAndSendImage', psid, filename: file.name, fileData: base64Data })
+                                })
+                                .then(res => res.text())
+                                .then(() => {
+                                    setTimeout(resolve, 800); // หน่วงเวลากันส่งถี่เกินไป
+                                })
+                                .catch(() => resolve());
                             };
                             reader.readAsDataURL(file);
                         });
                     }
-                    alert("ส่งสัญญาณแจ้งเตือนรูปภาพทั้งหมดเสร็จเรียบร้อย!");
+                    alert("อัปโหลดและส่งรูปภาพทั้งหมดสำเร็จเรียบร้อย!");
                     fileInput.value = '';
                 }
             </script>
@@ -308,7 +323,7 @@ function sortItemsByTime(itemsArray) {
 
 // 6. API จัดการข้อมูลและส่งข้อความ
 app.post('/customer-action', express.json({ limit: '20mb' }), async (req, res) => {
-    let { action, psid, date, index, amount, type, name, message } = req.body;
+    let { action, psid, date, index, amount, type, name, message, filename, fileData } = req.body;
     let today = new Date().toISOString().split('T')[0];
     if (!db[psid]) db[psid] = {};
 
@@ -322,9 +337,29 @@ app.post('/customer-action', express.json({ limit: '20mb' }), async (req, res) =
         if (!message) return res.status(400).send("ไม่มีข้อความที่ต้องการส่ง");
         await sendMessengerMessage(psid, message);
         return res.send("ส่งข้อความหาลูกค้าเรียบร้อยแล้ว");
-    } else if (action === 'sendImage') {
-        await sendMessengerMessage(psid, "🖼️ [แอดมินส่งรูปภาพมาให้คุณ]");
-        return res.send("ส่งรูปภาพสำเร็จ");
+    } else if (action === 'uploadAndSendImage') {
+        if (!fileData || !filename) return res.status(400).send("ไม่พบข้อมูลไฟล์รูปภาพ");
+        try {
+            let uniqueName = `uploads/${Date.now()}_${filename.replace(/[^a-zA-Z0-9_.-]/g, '_')}`;
+            
+            // อัปโหลดไฟล์รูปภาพขึ้นไปเก็บไว้บน GitHub Repository ของคุณ
+            await axios.put(`https://api.github.com/repos/${GITHUB_REPO}/contents/${uniqueName}`, {
+                message: 'Upload image via admin panel',
+                content: fileData
+            }, {
+                headers: { Authorization: `token ${GITHUB_TOKEN}` }
+            });
+
+            // สร้าง Public URL (Raw URL ของ GitHub) เพื่อส่งให้ Facebook นำไปแสดงผลเป็นรูปภาพจริง
+            let publicImageUrl = `https://raw.githubusercontent.com/${GITHUB_REPO}/main/${uniqueName}`;
+
+            // ส่งรูปภาพเข้าแชท Messenger ของลูกค้า
+            await sendMessengerImage(psid, publicImageUrl);
+            return res.send("อัปโหลดและส่งรูปสำเร็จ");
+        } catch (err) {
+            console.error("❌ อัปโหลดรูปขึ้น GitHub ไม่สำเร็จ:", err.response?.data || err.message);
+            return res.status(500).send("อัปโหลดรูปไม่สำเร็จ");
+        }
     } else if (action === 'add') {
         if (!db[psid][today]) db[psid][today] = [];
         db[psid][today].push({ time: timeNow, amount: amount });
