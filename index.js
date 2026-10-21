@@ -10,6 +10,10 @@ const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN || "your_page_access_tok
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN; 
 const GITHUB_REPO = process.env.GITHUB_REPO || "piyadee258910-dotcom/fb-sum-bot"; 
 
+// Telegram Config จาก Environment Variables บน Render
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
+
 let db = {};
 let recentCustomers = {};
 
@@ -32,6 +36,35 @@ function getThaiDate() {
         day: '2-digit'
     });
     return formatter.format(new Date());
+}
+
+// ฟังก์ชันส่งข้อความแจ้งเตือนไป Telegram
+async function sendTelegramMessage(text) {
+    if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
+    try {
+        await axios.post(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+            chat_id: TELEGRAM_CHAT_ID,
+            text: text,
+            parse_mode: 'HTML'
+        });
+    } catch (err) {
+        console.error("❌ ส่ง Telegram Message ไม่สำเร็จ:", err.response?.data || err.message);
+    }
+}
+
+// ฟังก์ชันส่งรูปภาพแจ้งเตือนไป Telegram
+async function sendTelegramPhoto(photoUrl, caption) {
+    if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
+    try {
+        await axios.post(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`, {
+            chat_id: TELEGRAM_CHAT_ID,
+            photo: photoUrl,
+            caption: caption,
+            parse_mode: 'HTML'
+        });
+    } catch (err) {
+        console.error("❌ ส่ง Telegram Photo ไม่สำเร็จ:", err.response?.data || err.message);
+    }
 }
 
 // 1. ฟังก์ชันดึงข้อมูลจาก GitHub
@@ -263,7 +296,6 @@ app.get('/customer', (req, res) => {
                         .then(res => res.text()).then(data => { alert(data); location.reload(); });
                     }
                 }
-                // ✨ ฟังก์ชันตกแต่งยอด (ใส่เวลาและจำนวนเงินเองได้ ไม่ส่งหาลูกค้า)
                 function customAddAmount(psid) {
                     let input = prompt("กรอกเวลาและจำนวนเงิน (ตัวอย่าง: 17.00 200 หรือ 17:00 200):");
                     if (!input) return;
@@ -335,7 +367,6 @@ app.get('/customer', (req, res) => {
                     .then(res => res.text()).then(data => { alert(data); inputElem.value = ''; });
                 }
 
-                // ปุ่มเดิม: ส่งรูปต้นฉบับทันทีโดยไม่แก้ไขภาพ
                 async function sendOriginalImagesViaGitHub(psid) {
                     let fileInput = document.getElementById('imageFiles_' + psid);
                     if (fileInput.files.length === 0) {
@@ -365,7 +396,6 @@ app.get('/customer', (req, res) => {
                     fileInput.value = '';
                 }
 
-                // ปุ่มใหม่: แก้ไขราคาเป็น 0 บาท แล้วส่งทันที
                 async function processAndSendZeroPrice(psid) {
                     let fileInput = document.getElementById('imageFiles_' + psid);
                     if (fileInput.files.length === 0) {
@@ -386,7 +416,6 @@ app.get('/customer', (req, res) => {
                                     canvas.height = img.height;
                                     ctx.drawImage(img, 0, 0);
 
-                                    // คำนวณพิกัดกลบราคาเดิมตามโค้ดของคุณ
                                     const sampleX = Math.round(img.width * 0.85); 
                                     const sampleY = Math.round(img.height * 0.52);
                                     const pixel = ctx.getImageData(sampleX, sampleY, 1, 1).data;
@@ -452,7 +481,6 @@ app.get('/customer', (req, res) => {
     `);
 });
 
-// ฟังก์ชันช่วยจัดเรียงรายการในแต่ละวันตามเวลา
 function sortItemsByTime(itemsArray) {
     return itemsArray.sort((a, b) => a.time.localeCompare(b.time));
 }
@@ -505,14 +533,13 @@ app.post('/customer-action', express.json({ limit: '20mb' }), async (req, res) =
 
         res.send("เพิ่มยอดและส่งข้อความหาลูกค้าสำเร็จ!");
     } else if (action === 'customAdd') {
-        // ✨ ฟังก์ชันรับยอดที่แอดมินระบุเวลาและจำนวนเงินเอง (ไม่ส่งหาลูกค้า)
         if (!db[psid][today]) db[psid][today] = [];
         db[psid][today].push({ time: time, amount: amount });
         
         sortItemsByTime(db[psid][today]);
         await saveToGitHub();
 
-        return res.send("บันทึกตกแต่งยอดเรียบร้อย (จัดเรียงเวลาและไมjได้ส่งหาลูกค้า)");
+        return res.send("บันทึกตกแต่งยอดเรียบร้อย");
     } else if (action === 'edit') {
         if (db[psid][date] && db[psid][date][index]) {
             db[psid][date][index].amount = amount;
@@ -567,7 +594,7 @@ app.post('/customer-action', express.json({ limit: '20mb' }), async (req, res) =
     await saveToGitHub();
 });
 
-// 7. Webhook รับข้อความ Messenger ปกติ
+// 7. Webhook รับข้อความและรูปภาพจาก Messenger (พร้อมส่งต่อเข้า Telegram)
 app.post('/webhook', async (req, res) => {
     let body = req.body;
     if (body.object === 'page') {
@@ -575,30 +602,52 @@ app.post('/webhook', async (req, res) => {
             let webhook_event = entry.messaging[0];
             let senderPSID = webhook_event.sender.id;
 
-            if (webhook_event.message && webhook_event.message.text) {
-                let incomingText = webhook_event.message.text.trim();
-                recentCustomers[senderPSID] = { lastMessage: incomingText, time: getThaiTime() };
+            if (webhook_event.message) {
+                let msg = webhook_event.message;
+                let custName = db[senderPSID]?.name || `PSID: ${senderPSID}`;
 
-                let today = getThaiDate();
-                if (!db[senderPSID]) db[senderPSID] = {};
-                if (!db[senderPSID][today]) db[senderPSID][today] = [];
+                // 1. ถ้าลูกค้าส่งข้อความตัวหนังสือมา
+                if (msg.text) {
+                    let incomingText = msg.text.trim();
+                    recentCustomers[senderPSID] = { lastMessage: incomingText, time: getThaiTime() };
 
-                let replyMessage = "";
-                if (incomingText.startsWith('.')) {
-                    let amount = parseFloat(incomingText.replace(/^\.+/, ''));
-                    if (!isNaN(amount)) {
-                        let timeNow = getThaiTime();
-                        db[senderPSID][today].push({ time: timeNow, amount: amount });
-                        
-                        sortItemsByTime(db[senderPSID][today]);
-                        await saveToGitHub();
+                    // ส่งแจ้งเตือนข้อความเข้า Telegram
+                    await sendTelegramMessage(`💬 <b>ข้อความใหม่จาก:</b> ${custName}\nข้อความ: ${incomingText}`);
 
-                        let total = db[senderPSID][today].reduce((sum, item) => sum + item.amount, 0);
-                        let listText = db[senderPSID][today].map((item, idx) => `${idx + 1}. [${item.time}] +${item.amount}`).join('\n');
-                        replyMessage = `📅 [${today}] รายการประจำวัน:\n${listText}\n-------------------\n💰 ยอดรวมของวัน: ${total} บาท`;
+                    let today = getThaiDate();
+                    if (!db[senderPSID]) db[senderPSID] = {};
+                    if (!db[senderPSID][today]) db[senderPSID][today] = [];
+
+                    let replyMessage = "";
+                    if (incomingText.startsWith('.')) {
+                        let amount = parseFloat(incomingText.replace(/^\.+/, ''));
+                        if (!isNaN(amount)) {
+                            let timeNow = getThaiTime();
+                            db[senderPSID][today].push({ time: timeNow, amount: amount });
+                            
+                            sortItemsByTime(db[senderPSID][today]);
+                            await saveToGitHub();
+
+                            let total = db[senderPSID][today].reduce((sum, item) => sum + item.amount, 0);
+                            let listText = db[senderPSID][today].map((item, idx) => `${idx + 1}. [${item.time}] +${item.amount}`).join('\n');
+                            replyMessage = `📅 [${today}] รายการประจำวัน:\n${listText}\n-------------------\n💰 ยอดรวมของวัน: ${total} บาท`;
+                        }
+                    }
+                    if (replyMessage) await sendMessengerMessage(senderPSID, replyMessage);
+                }
+
+                // 2. ถ้าลูกค้าส่งรูปภาพ/สลิปมา
+                if (msg.attachments && msg.attachments.length > 0) {
+                    for (let attachment of msg.attachments) {
+                        if (attachment.type === 'image') {
+                            let imageUrl = attachment.payload.url;
+                            recentCustomers[senderPSID] = { lastMessage: '🖼️ [ส่งรูปภาพ/สลิป]', time: getThaiTime() };
+
+                            // ส่งรูปภาพและแจ้งเตือนเข้า Telegram ทันที!
+                            await sendTelegramPhoto(imageUrl, `🖼️ <b>ลูกค้าส่งรูปภาพ/สลิปมาใหม่:</b> ${custName}`);
+                        }
                     }
                 }
-                if (replyMessage) await sendMessengerMessage(senderPSID, replyMessage);
             }
         }
         res.status(200).send('EVENT_RECEIVED');
