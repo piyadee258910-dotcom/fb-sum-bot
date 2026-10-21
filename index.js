@@ -229,6 +229,7 @@ app.get('/customer', (req, res) => {
                     <div style="display: flex; justify-content: space-between; align-items: center;">
                         <strong>📅 วันที่: ${date}</strong> (ยอดวันนี้: ${dayTotal})
                         <div>
+                            <button onclick="copyDailyReport('${psid}', '${date}')" style="background: #6c757d; color: white; border: none; padding: 3px 6px; border-radius: 4px; cursor: pointer; font-size: 11px; margin-right: 4px;">📋 คัดลอกยอดวันนี้</button>
                             <button onclick="sendReport('${psid}', 'daily', '${date}')" style="background: #17a2b8; color: white; border: none; padding: 3px 6px; border-radius: 4px; cursor: pointer; font-size: 11px; margin-right: 4px;">📤 ส่งยอดรายวัน</button>
                             <button onclick="clearDay('${psid}', '${date}')" style="background: #ff851b; color: white; border: none; padding: 3px 6px; border-radius: 4px; cursor: pointer; font-size: 11px;">🗑 เคลียร์วันนึ้</button>
                         </div>
@@ -341,6 +342,25 @@ app.get('/customer', (req, res) => {
                         fetch('/customer-action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'sendReport', psid, type, date }) })
                         .then(res => res.text()).then(data => { alert(data); });
                     }
+                }
+                function copyDailyReport(psid, date) {
+                    fetch('/customer-action', { 
+                        method: 'POST', 
+                        headers: { 'Content-Type': 'application/json' }, 
+                        body: JSON.stringify({ action: 'getDailyReportText', psid, date }) 
+                    })
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data && data.text) {
+                            navigator.clipboard.writeText(data.text).then(() => {
+                                alert("📋 คัดลอกข้อความสรุปยอดวันที่ " + date + " เรียบร้อย!\nสามารถกด Ctrl+V วางในแชทเพจได้เลยครับ");
+                            }).catch(err => {
+                                alert("❌ คัดลอกไม่สำเร็จ: " + err);
+                            });
+                        } else {
+                            alert("❌ ไม่พบข้อมูลยอดของวันนี้");
+                        }
+                    });
                 }
                 function sendCustomMessage(psid) {
                     let inputElem = document.getElementById('customMsg_' + psid);
@@ -458,6 +478,16 @@ app.post('/customer-action', express.json({ limit: '20mb' }), async (req, res) =
         if (!message) return res.status(400).send("ไม่มีข้อความที่ต้องการส่ง");
         await sendMessengerMessage(psid, message);
         return res.send("ส่งข้อความหาลูกค้าเรียบร้อยแล้ว");
+    } else if (action === 'getDailyReportText') {
+        let customerData = db[psid];
+        if (!customerData) return res.json({ text: "" });
+        
+        let items = customerData[date] || [];
+        let dayTotal = items.reduce((sum, item) => sum + item.amount, 0);
+        let listText = items.map((item, idx) => `${idx + 1}. [${item.time}] +${item.amount}`).join('\n');
+        
+        let reportMessage = `📅 [${date}] รายการประจำวัน:\n${listText || 'ไม่มีรายการ'}\n-------------------\n💰 ยอดรวมของวัน: ${dayTotal} บาท`;
+        return res.json({ text: reportMessage });
     } else if (action === 'uploadAndSendImage') {
         if (!fileData || !filename) return res.status(400).send("ไม่พบข้อมูลไฟล์รูปภาพ");
         try {
