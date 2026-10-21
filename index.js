@@ -38,22 +38,14 @@ function getThaiDate() {
     return formatter.format(new Date());
 }
 
-// ฟังก์ชันส่งข้อความแจ้งเตือนไป Telegram (พร้อมปุ่มเมนูด้านล่าง)
+// ฟังก์ชันส่งข้อความแจ้งเตือนไป Telegram
 async function sendTelegramMessage(text) {
     if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
     try {
         await axios.post(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
             chat_id: TELEGRAM_CHAT_ID,
             text: text,
-            parse_mode: 'HTML',
-            reply_markup: {
-                keyboard: [
-                    ["พี่บอย", "มาดามแป้ง"],
-                    ["ดาอี"]
-                ],
-                resize_keyboard: true,
-                is_persistent: true
-            }
+            parse_mode: 'HTML'
         });
     } catch (err) {
         console.error("❌ ส่ง Telegram Message ไม่สำเร็จ:", err.response?.data || err.message);
@@ -541,7 +533,7 @@ app.post('/customer-action', express.json({ limit: '20mb' }), async (req, res) =
     await saveToGitHub();
 });
 
-// 7. Webhook รับข้อความและรูปภาพจาก Messenger
+// 7. Webhook รับข้อความและรูปภาพจาก Messenger (พร้อมส่งต่อเข้า Telegram)
 app.post('/webhook', async (req, res) => {
     let body = req.body;
     if (body.object === 'page') {
@@ -549,12 +541,14 @@ app.post('/webhook', async (req, res) => {
             let webhook_event = entry.messaging[0];
             let senderPSID = webhook_event.sender.id;
 
+            // 🚫 บล็อกไม่ให้รับข้อความหรือรูปภาพจาก Page ID ของแอดมินเอง
             if (senderPSID === "1422397037618559") continue;
 
             if (webhook_event.message) {
                 let msg = webhook_event.message;
                 let custName = db[senderPSID]?.name || `PSID: ${senderPSID}`;
 
+                // 1. ข้อความตัวหนังสือ
                 if (msg.text) {
                     let incomingText = msg.text.trim();
                     recentCustomers[senderPSID] = { lastMessage: incomingText, time: getThaiTime() };
@@ -580,6 +574,7 @@ app.post('/webhook', async (req, res) => {
                     if (replyMessage) await sendMessengerMessage(senderPSID, replyMessage);
                 }
 
+                // 2. รูปภาพ/สลิป
                 if (msg.attachments && msg.attachments.length > 0) {
                     for (let attachment of msg.attachments) {
                         if (attachment.type === 'image') {
@@ -609,7 +604,7 @@ function setAdminLock(psid) {
     }, 30000);
 }
 
-// 8. Webhook สำหรับรับคำสั่งจาก Telegram
+// 8. Webhook สำหรับรับคำสั่งจาก Telegram (แอดมินพิมพ์คุยโต้ตอบและสั่งงาน)
 app.post('/telegram-webhook', express.json(), async (req, res) => {
     let update = req.body;
     if (update.message && update.message.chat) {
@@ -619,10 +614,12 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
             let messageObj = update.message;
             let text = messageObj.text || messageObj.caption || "";
             let photoArray = messageObj.photo;
+            let mediaGroupId = messageObj.media_group_id;
 
             let targetPsid = null;
             let actualText = text;
 
+            // 1. ลำดับที่ 1: เช็คจากชื่อที่แอดมินพิมพ์กำกับมา (รองรับ พี/พี่ บอย)
             if (text) {
                 let parts = text.trim().split(/\s+/);
                 let found = findPsidByNameQuery(parts[0]);
@@ -633,16 +630,19 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
                 }
             }
 
+            // 2. ลำดับที่ 2: ถ้าไม่ได้พิมพ์ชื่อ แต่กำลังอยู่ในช่วงล็อก 30 วิ ให้ใช้เป้าหมายเดิมต่อเนื่อง
             if (!targetPsid && lockedAdminTargetPsid) {
                 targetPsid = lockedAdminTargetPsid;
                 setAdminLock(targetPsid); 
             }
 
+            // 3. ลำดับที่ 3: ดึงจากลูกค้ารายล่าสุด (Recent Customers)
             if (!targetPsid) {
                 let recentKeys = Object.keys(recentCustomers);
                 targetPsid = recentKeys.length > 0 ? recentKeys[recentKeys.length - 1] : null;
             }
 
+            // 4. ลำดับที่ 4: ดึงจากฐานข้อมูลตัวสุดท้าย
             if (!targetPsid) {
                 let allPsids = Object.keys(db);
                 if (allPsids.length > 0) {
@@ -781,3 +781,29 @@ const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
     console.log(`Webhook server is running on port ${PORT}`);
 });
+// ฟังก์ชันส่งปุ่มเมนูรายชื่อให้แอดมินใน Telegram อัตโนมัติเมื่อเริ่มระบบ
+async function sendAdminMenuButtons() {
+    if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
+    try {
+        await axios.post(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+            chat_id: TELEGRAM_CHAT_ID,
+           
+            parse_mode: 'HTML',
+            reply_markup: {
+                keyboard: [
+                    ["พี่บอย", "มาดามแป้ง"],
+                    ["ดาอี"]
+                ],
+                resize_keyboard: true,
+                is_persistent: true
+            }
+        });
+    } catch (err) {
+        console.error("❌ ส่งปุ่มเมนูไม่สำเร็จ:", err.response?.data || err.message);
+    }
+}
+
+// เรียกใช้งานฟังก์ชันส่งปุ่มเมนูหลังจากบอทสตาร์ท
+setTimeout(() => {
+    sendAdminMenuButtons();
+}, 3000);
