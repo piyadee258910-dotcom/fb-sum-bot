@@ -680,7 +680,20 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
             let photoArray = update.message.photo;
             let lastPsid = Object.keys(recentCustomers)[Object.keys(recentCustomers).length - 1];
 
-            // 1. ถ้ามีการส่งรูปภาพมาด้วย (ไม่ว่าจะมาเดี่ยวๆ หรือมีข้อความพิมพ์แนบมาพร้อมกัน)
+            let targetPsid = lastPsid;
+            let actualText = text;
+
+            // ค้นหาชื่อลูกค้าจากคำแรกสุดที่พิมพ์มา (เช่น "พี่บอย ...")
+            if (text) {
+                let parts = text.trim().split(/\s+/);
+                let found = findPsidByNameQuery(parts[0]);
+                if (found) {
+                    targetPsid = found;
+                    actualText = parts.slice(1).join(" "); // ตัดชื่อออกเหลือแต่ข้อความหรือคำสั่ง
+                }
+            }
+
+            // 1. ถ้ามีการส่งรูปภาพมาด้วย (สามารถมีข้อความหรือคำสั่งพิมพ์แนบมาพร้อมกันได้)
             if (photoArray && photoArray.length > 0) {
                 let largestPhoto = photoArray[photoArray.length - 1];
                 let fileId = largestPhoto.file_id;
@@ -689,13 +702,6 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
                     let fileRes = await axios.get(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getFile?file_id=${fileId}`);
                     let filePath = fileRes.data.result.file_path;
                     let telegramPhotoUrl = `https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${filePath}`;
-
-                    let targetPsid = lastPsid;
-                    if (text) {
-                        let parts = text.trim().split(/\s+/);
-                        let found = findPsidByNameQuery(parts[0]);
-                        if (found) targetPsid = found;
-                    }
 
                     if (targetPsid) {
                         await sendMessengerImage(targetPsid, telegramPhotoUrl);
@@ -710,18 +716,15 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
                 }
             }
 
-            // 2. ถ้ามีข้อความตัวหนังสือ (แยกจัดการคำสั่งเพิ่มยอดหรือส่งข้อความปกติ)
-            if (text && (!photoArray || photoArray.length === 0)) {
-                let parts = text.trim().split(/\s+/);
-                let targetNameQuery = parts[0];
-                let targetPsid = findPsidByNameQuery(targetNameQuery);
-
+            // 2. ถ้ามีข้อความหรือคำสั่งเพิ่มเติม (เช่น ข้อความทั่วไป หรือคำสั่ง ..200)
+            if (actualText) {
+                let today = getThaiDate();
                 if (targetPsid) {
-                    let remainder = parts.slice(1).join(" ");
-                    let today = getThaiDate();
+                    let custName = db[targetPsid]?.name || targetPsid;
 
-                    if (remainder.startsWith('.')) {
-                        let amount = parseFloat(remainder.replace(/^\.+/, ''));
+                    if (actualText.startsWith('.')) {
+                        // รูปแบบคำสั่งเพิ่มยอด เช่น "..200"
+                        let amount = parseFloat(actualText.replace(/^\.+/, ''));
                         if (!isNaN(amount)) {
                             if (!db[targetPsid]) db[targetPsid] = {};
                             if (!db[targetPsid][today]) db[targetPsid][today] = [];
@@ -731,13 +734,19 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
                             sortItemsByTime(db[targetPsid][today]);
                             await saveToGitHub();
 
-                            let custName = db[targetPsid].name || targetPsid;
                             let total = db[targetPsid][today].reduce((sum, item) => sum + item.amount, 0);
-                            await sendTelegramMessage(`✅ บันทึกยอด +${amount} ให้ <b>${custName}</b> สำเร็จ! (ยอดวันนี้: ${total} บาท)`);
+                            let listText = db[targetPsid][today].map((item, idx) => `${idx + 1}. [${item.time}] +${item.amount}`).join('\n');
+                            
+                            // ส่งสรุปยอดไปหาลูกค้าทาง Messenger
+                            let reportMsg = `📅 [${today}] รายการประจำวัน:\n${listText}\n-------------------\n💰 ยอดรวมของวัน: ${total} บาท`;
+                            await sendMessengerMessage(targetPsid, reportMsg);
+
+                            await sendTelegramMessage(`✅ บันทึกยอด +${amount} ให้ <b>${custName}</b> และส่งยอดให้ลูกค้าแล้ว! (ยอดวันนี้: ${total} บาท)`);
                         }
-                    } else if (remainder.includes(" ")) {
-                        let timeCandidate = remainder.split(" ")[0];
-                        let amountCandidate = parseFloat(remainder.split(" ")[1]);
+                    } else if (actualText.includes(" ")) {
+                        // รูปแบบระบุเวลาและยอด เช่น "17.00 200"
+                        let timeCandidate = actualText.split(" ")[0];
+                        let amountCandidate = parseFloat(actualText.split(" ")[1]);
 
                         if ((timeCandidate.includes(":") || timeCandidate.includes(".")) && !isNaN(amountCandidate)) {
                             let formattedTime = timeCandidate.replace('.', ':');
@@ -748,25 +757,20 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
                             sortItemsByTime(db[targetPsid][today]);
                             await saveToGitHub();
 
-                            let custName = db[targetPsid].name || targetPsid;
                             let total = db[targetPsid][today].reduce((sum, item) => sum + item.amount, 0);
                             await sendTelegramMessage(`✨ บันทึกตกแต่งยอด [${formattedTime}] +${amountCandidate} ให้ <b>${custName}</b> สำเร็จ! (ยอดวันนี้: ${total} บาท)`);
                         } else {
-                            let custName = db[targetPsid].name || targetPsid;
-                            await sendMessengerMessage(targetPsid, remainder);
-                            await sendTelegramMessage(`📤 ส่งข้อความหา <b>${custName}</b> เรียบร้อย:\n"${remainder}"`);
+                            // ส่งข้อความหาลูกค้าปกติ
+                            await sendMessengerMessage(targetPsid, actualText);
+                            await sendTelegramMessage(`📤 ส่งข้อความหา <b>${custName}</b> เรียบร้อย:\n"${actualText}"`);
                         }
-                    } else if (remainder) {
-                        let custName = db[targetPsid].name || targetPsid;
-                        await sendMessengerMessage(targetPsid, remainder);
-                        await sendTelegramMessage(`📤 ส่งข้อความหา <b>${custName}</b> เรียบร้อย:\n"${remainder}"`);
+                    } else {
+                        // ส่งข้อความหาลูกค้าปกติ
+                        await sendMessengerMessage(targetPsid, actualText);
+                        await sendTelegramMessage(`📤 ส่งข้อความหา <b>${custName}</b> เรียบร้อย:\n"${actualText}"`);
                     }
-                } else if (lastPsid && recentCustomers[lastPsid]) {
-                    await sendMessengerMessage(lastPsid, text);
-                    let custName = db[lastPsid]?.name || lastPsid;
-                    await sendTelegramMessage(`📤 ส่งข้อความหาลูกค้ารายล่าสุด [<b>${custName}</b>]:\n"${text}"`);
                 } else {
-                    await sendTelegramMessage(`❌ ไม่พบชื่อลูกค้า "${targetNameQuery}" ในระบบ`);
+                    await sendTelegramMessage(`❌ ไม่พบเป้าหมายลูกค้าในระบบ`);
                 }
             }
         }
