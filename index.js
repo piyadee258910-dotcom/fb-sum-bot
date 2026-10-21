@@ -587,6 +587,10 @@ app.post('/webhook', async (req, res) => {
 });
 
 
+// --- ตัวแปรเก็บ Session กลุ่มรูปภาพ ---
+let mediaGroupSessions = {}; 
+// ใช้เก็บข้อมูลกลุ่ม: { "media_group_id": { psid: "...", count: จำนวนรูปที่ส่งไปแล้ว } }
+
 // 8. Webhook สำหรับรับคำสั่งจาก Telegram (แอดมินพิมพ์คุยโต้ตอบและสั่งงาน)
 app.post('/telegram-webhook', express.json(), async (req, res) => {
     let update = req.body;
@@ -597,21 +601,38 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
             let messageObj = update.message;
             let text = messageObj.text || messageObj.caption || "";
             let photoArray = messageObj.photo;
+            let mediaGroupId = messageObj.media_group_id; // รหัสกลุ่มอัลบั้ม
 
-            // 🔒 ล็อกเป้าหมายลูกค้าคนปัจจุบันทันที
-            let recentKeys = Object.keys(recentCustomers);
-            let targetPsid = recentKeys.length > 0 ? recentKeys[recentKeys.length - 1] : null;
+            let targetPsid = null;
             let actualText = text;
 
-            if (text) {
+            // 1. ถ้ามี mediaGroupId และเคยถูกบันทึกไว้ ให้ใช้ PSID เดิมทันที
+            if (mediaGroupId && mediaGroupSessions[mediaGroupId]) {
+                targetPsid = mediaGroupSessions[mediaGroupId].psid;
+            }
+
+            // 2. ถ้ายังไม่มี ให้ลองเช็คจากชื่อที่แอดมินพิมพ์กำกับมา (เช่น "พี่บอย")
+            if (!targetPsid && text) {
                 let parts = text.trim().split(/\s+/);
                 let found = findPsidByNameQuery(parts[0]);
                 if (found) {
                     targetPsid = found;
-                    actualText = parts.slice(1).join(" "); 
+                    actualText = parts.slice(1).join(" "); // ตัดชื่อออกเหลือแต่ข้อความจริง
+
+                    // ถ้าเป็นอัลบั้มรูป ให้เริ่มสร้าง Session ของกลุ่มนี้ไว้
+                    if (mediaGroupId && photoArray && photoArray.length > 0) {
+                        mediaGroupSessions[mediaGroupId] = { psid: targetPsid };
+                    }
                 }
             }
 
+            // 3. ถ้ายังไม่เจอ ให้ดึงจากลูกค้ารายล่าสุด
+            if (!targetPsid) {
+                let recentKeys = Object.keys(recentCustomers);
+                targetPsid = recentKeys.length > 0 ? recentKeys[recentKeys.length - 1] : null;
+            }
+
+            // 4. ถ้ายังว่างอีก ดึงจากฐานข้อมูลตัวสุดท้าย
             if (!targetPsid) {
                 let allPsids = Object.keys(db);
                 if (allPsids.length > 0) {
@@ -621,9 +642,13 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
 
             const lockedTargetPsid = targetPsid;
 
-            // 1. จัดการรูปภาพ (รองรับทั้งรูปเดี่ยว และรูปกลุ่มอัลบั้ม)
+            // ถ้ามีรูปเข้ามาแต่ยังไม่มี Session กลุ่ม ให้ผูกไว้ก่อน
+            if (mediaGroupId && lockedTargetPsid && !mediaGroupSessions[mediaGroupId]) {
+                mediaGroupSessions[mediaGroupId] = { psid: lockedTargetPsid };
+            }
+
+            // 1. จัดการรูปภาพ
             if (photoArray && photoArray.length > 0) {
-                // Telegram จะส่งขนาดรูปมาหลายเรโซลูชั่น ตัวท้ายสุดคือรูปใหญ่สุดคมชัดสุด
                 let largestPhoto = photoArray[photoArray.length - 1];
                 let fileId = largestPhoto.file_id;
 
@@ -635,14 +660,11 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
                     if (lockedTargetPsid) {
                         let custName = db[lockedTargetPsid]?.name || lockedTargetPsid;
                         
-                        // ดาวน์โหลดภาพมาเป็น Buffer
                         let imageResponse = await axios.get(telegramPhotoUrl, { responseType: 'arraybuffer' });
                         let base64Image = Buffer.from(imageResponse.data).toString('base64');
                         
-                        // ตั้งชื่อไฟล์ป้องกันชนกันด้วย Timestamp + เลขสุ่ม
                         let uniqueName = `uploads/tg_${Date.now()}_${Math.random().toString(36).substring(2, 8)}.jpg`;
 
-                        // อัปโหลดขึ้น GitHub
                         await axios.put(`https://api.github.com/repos/${GITHUB_REPO}/contents/${uniqueName}`, {
                             message: 'Upload image bundle from Telegram bot',
                             content: base64Image
@@ -650,15 +672,26 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
 
                         let publicImageUrl = `https://raw.githubusercontent.com/${GITHUB_REPO}/main/${uniqueName}`;
 
-                        // ส่งภาพเข้า Messenger ของลูกค้าที่ล็อกเป้าไว้
+                        // ส่งภาพเข้า Messenger
                         await sendMessengerImage(lockedTargetPsid, publicImageUrl);
                         await sendTelegramMessage(`🖼 ส่งรูปภาพไปยังแชท <b>${custName}</b> สำเร็จ!`);
+
+                        // 🧹 **ล้าง Session ทันทีหลังจากส่งรูปภาพนี้เสร็จเรียบร้อย**
+                        if (mediaGroupId && mediaGroupSessions[mediaGroupId]) {
+                            delete mediaGroupSessions[mediaGroupId];
+                        }
+
                     } else {
                         await sendTelegramMessage(`❌ ไม่พบเป้าหมายลูกค้าในระบบที่จะส่งรูปไป`);
                     }
                 } catch (imgErr) {
                     console.error("❌ ส่งรูปจาก Telegram ไป FB ไม่สำเร็จ:", imgErr.response?.data || imgErr.message);
                     await sendTelegramMessage(`❌ ส่งรูปภาพไม่สำเร็จ: ${imgErr.message}`);
+                    
+                    // หากเกิดข้อผิดพลาด ก็ให้เคลียร์ Session ทิ้งด้วยเช่นกัน
+                    if (mediaGroupId && mediaGroupSessions[mediaGroupId]) {
+                        delete mediaGroupSessions[mediaGroupId];
+                    }
                 }
             }
 
@@ -702,7 +735,7 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
                             let total = db[lockedTargetPsid][today].reduce((sum, item) => sum + item.amount, 0);
                             await sendTelegramMessage(`✨ บันทึกตกแต่งยอด [${formattedTime}] +${amountCandidate} ให้ <b>${custName}</b> สำเร็จ! (ยอดวันนี้: ${total} บาท)`);
                         } else {
-                            await sendMessengerMessage(lockedTargetPsid, actualText);
+                            await sendMessengerImage ? await sendMessengerMessage(lockedTargetPsid, actualText) : null;
                             await sendTelegramMessage(`📤 ส่งข้อความหา <b>${custName}</b> เรียบร้อย:\n"${actualText}"`);
                         }
                     } else {
@@ -716,6 +749,7 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
         }
     }
     res.status(200).send('OK');
+});
 });
 // 9. ลิงก์ทดสอบด่วน /admin-test
 app.get('/admin-test', async (req, res) => {
