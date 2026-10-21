@@ -38,14 +38,22 @@ function getThaiDate() {
     return formatter.format(new Date());
 }
 
-// ฟังก์ชันส่งข้อความแจ้งเตือนไป Telegram
+// ฟังก์ชันส่งข้อความแจ้งเตือนไป Telegram (พร้อมปุ่มเมนูด้านล่าง)
 async function sendTelegramMessage(text) {
     if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
     try {
         await axios.post(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
             chat_id: TELEGRAM_CHAT_ID,
             text: text,
-            parse_mode: 'HTML'
+            parse_mode: 'HTML',
+            reply_markup: {
+                keyboard: [
+                    ["พี่บอย", "มาดามแป้ง"],
+                    ["ดาอี"]
+                ],
+                resize_keyboard: true,
+                is_persistent: true
+            }
         });
     } catch (err) {
         console.error("❌ ส่ง Telegram Message ไม่สำเร็จ:", err.response?.data || err.message);
@@ -470,12 +478,14 @@ app.post('/customer-action', express.json({ limit: '20mb' }), async (req, res) =
         if (!db[psid][today]) db[psid][today] = [];
         db[psid][today].push({ time: timeNow, amount: amount });
         sortItemsByTime(db[psid][today]);
+        await saveToGitHub();
 
         let total = db[psid][today].reduce((sum, item) => sum + item.amount, 0);
         let listText = db[psid][today].map((item, idx) => `${idx + 1}. [${item.time}] +${item.amount}`).join('\n');
         let reportMsg = `📅 [${today}] รายการประจำวัน:\n${listText}\n-------------------\n💰 ยอดรวมของวัน: ${total} บาท`;
+        
         await sendMessengerMessage(psid, reportMsg);
-        res.send("เพิ่มยอดและส่งข้อความหาลูกค้าสำเร็จ!");
+        return res.send("เพิ่มยอดและส่งข้อความหาลูกค้าสำเร็จ!");
     } else if (action === 'customAdd') {
         if (!db[psid][today]) db[psid][today] = [];
         db[psid][today].push({ time: time, amount: amount });
@@ -487,21 +497,25 @@ app.post('/customer-action', express.json({ limit: '20mb' }), async (req, res) =
             db[psid][date][index].amount = amount;
             db[psid][date][index].time = timeNow;
             sortItemsByTime(db[psid][date]);
-            res.send("แก้ไขข้อมูลและอัปเดตเวลาเรียบร้อย!");
+            await saveToGitHub();
+            return res.send("แก้ไขข้อมูลและอัปเดตเวลาเรียบร้อย!");
         } else { return res.status(400).send("ไม่พบรายการ"); }
     } else if (action === 'delete') {
         if (db[psid][date] && db[psid][date][index] !== undefined) {
             db[psid][date].splice(index, 1);
-            res.send("ลบรายการสำเร็จ!");
+            await saveToGitHub();
+            return res.send("ลบรายการสำเร็จ!");
         } else { return res.status(400).send("ไม่พบรายการ"); }
     } else if (action === 'clearDay') {
         if (db[psid][date]) {
             db[psid][date] = [];
-            res.send("เคลียร์ยอดประจำวันสำเร็จ!");
+            await saveToGitHub();
+            return res.send("เคลียร์ยอดประจำวันสำเร็จ!");
         } else { return res.status(400).send("ไม่พบข้อมูลวันที่ต้องการเคลียร์"); }
     } else if (action === 'clearAll') {
         delete db[psid];
-        res.send("ลบข้อมูลทั้งหมดของลูกค้ารายนี้เรียบร้อยแล้ว!");
+        await saveToGitHub();
+        return res.send("ลบข้อมูลทั้งหมดของลูกค้ารายนี้เรียบร้อยแล้ว!");
     } else if (action === 'sendReport') {
         let customerData = db[psid];
         if (!customerData) return res.status(400).send("ไม่พบข้อมูลลูกค้า");
@@ -530,7 +544,6 @@ app.post('/customer-action', express.json({ limit: '20mb' }), async (req, res) =
     } else { 
         return res.status(400).send("Action ไม่ถูกต้อง"); 
     }
-    await saveToGitHub();
 });
 
 // 7. Webhook รับข้อความและรูปภาพจาก Messenger (พร้อมส่งต่อเข้า Telegram)
@@ -541,7 +554,6 @@ app.post('/webhook', async (req, res) => {
             let webhook_event = entry.messaging[0];
             let senderPSID = webhook_event.sender.id;
 
-            // 🚫 บล็อกไม่ให้รับข้อความหรือรูปภาพจาก Page ID ของแอดมินเอง
             if (senderPSID === "1422397037618559") continue;
 
             if (webhook_event.message) {
@@ -558,7 +570,6 @@ app.post('/webhook', async (req, res) => {
                     if (!db[senderPSID]) db[senderPSID] = {};
                     if (!db[senderPSID][today]) db[senderPSID][today] = [];
 
-                    let replyMessage = "";
                     if (incomingText.startsWith('.')) {
                         let amount = parseFloat(incomingText.replace(/^\.+/, ''));
                         if (!isNaN(amount)) {
@@ -568,10 +579,11 @@ app.post('/webhook', async (req, res) => {
                             await saveToGitHub();
                             let total = db[senderPSID][today].reduce((sum, item) => sum + item.amount, 0);
                             let listText = db[senderPSID][today].map((item, idx) => `${idx + 1}. [${item.time}] +${item.amount}`).join('\n');
-                            replyMessage = `📅 [${today}] รายการประจำวัน:\n${listText}\n-------------------\n💰 ยอดรวมของวัน: ${total} บาท`;
+                            
+                            let replyMessage = `📅 [${today}] รายการประจำวัน:\n${listText}\n-------------------\n💰 ยอดรวมของวัน: ${total} บาท`;
+                            await sendMessengerMessage(senderPSID, replyMessage);
                         }
                     }
-                    if (replyMessage) await sendMessengerMessage(senderPSID, replyMessage);
                 }
 
                 // 2. รูปภาพ/สลิป
@@ -604,7 +616,7 @@ function setAdminLock(psid) {
     }, 30000);
 }
 
-// 8. Webhook สำหรับรับคำสั่งจาก Telegram (แอดมินพิมพ์คุยโต้ตอบและสั่งงาน)
+// 8. Webhook สำหรับรับคำสั่งจาก Telegram
 app.post('/telegram-webhook', express.json(), async (req, res) => {
     let update = req.body;
     if (update.message && update.message.chat) {
@@ -614,12 +626,10 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
             let messageObj = update.message;
             let text = messageObj.text || messageObj.caption || "";
             let photoArray = messageObj.photo;
-            let mediaGroupId = messageObj.media_group_id;
 
             let targetPsid = null;
             let actualText = text;
 
-            // 1. ลำดับที่ 1: เช็คจากชื่อที่แอดมินพิมพ์กำกับมา (รองรับ พี/พี่ บอย)
             if (text) {
                 let parts = text.trim().split(/\s+/);
                 let found = findPsidByNameQuery(parts[0]);
@@ -630,19 +640,16 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
                 }
             }
 
-            // 2. ลำดับที่ 2: ถ้าไม่ได้พิมพ์ชื่อ แต่กำลังอยู่ในช่วงล็อก 30 วิ ให้ใช้เป้าหมายเดิมต่อเนื่อง
             if (!targetPsid && lockedAdminTargetPsid) {
                 targetPsid = lockedAdminTargetPsid;
                 setAdminLock(targetPsid); 
             }
 
-            // 3. ลำดับที่ 3: ดึงจากลูกค้ารายล่าสุด (Recent Customers)
             if (!targetPsid) {
                 let recentKeys = Object.keys(recentCustomers);
                 targetPsid = recentKeys.length > 0 ? recentKeys[recentKeys.length - 1] : null;
             }
 
-            // 4. ลำดับที่ 4: ดึงจากฐานข้อมูลตัวสุดท้าย
             if (!targetPsid) {
                 let allPsids = Object.keys(db);
                 if (allPsids.length > 0) {
@@ -781,29 +788,3 @@ const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
     console.log(`Webhook server is running on port ${PORT}`);
 });
-// ฟังก์ชันส่งปุ่มเมนูรายชื่อให้แอดมินใน Telegram อัตโนมัติเมื่อเริ่มระบบ
-async function sendAdminMenuButtons() {
-    if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
-    try {
-        await axios.post(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
-            chat_id: TELEGRAM_CHAT_ID,
-           
-            parse_mode: 'HTML',
-            reply_markup: {
-                keyboard: [
-                    ["พี่บอย", "มาดามแป้ง"],
-                    ["ดาอี"]
-                ],
-                resize_keyboard: true,
-                is_persistent: true
-            }
-        });
-    } catch (err) {
-        console.error("❌ ส่งปุ่มเมนูไม่สำเร็จ:", err.response?.data || err.message);
-    }
-}
-
-// เรียกใช้งานฟังก์ชันส่งปุ่มเมนูหลังจากบอทสตาร์ท
-setTimeout(() => {
-    sendAdminMenuButtons();
-}, 3000);
