@@ -131,7 +131,7 @@ async function sendMessengerMessage(recipientId, messageText) {
     }
 }
 
-// ฟังก์ชันส่งรูปภาพเดี่ยวทาง Messenger
+// ฟังก์ชันส่งรูปภาพทาง Messenger
 async function sendMessengerImage(recipientId, imageUrl) {
     try {
         if (!PAGE_ACCESS_TOKEN || PAGE_ACCESS_TOKEN === "your_page_access_token_here") return;
@@ -147,70 +147,10 @@ async function sendMessengerImage(recipientId, imageUrl) {
                 }
             }
         });
-        console.log("🖼 ส่งรูปภาพเดี่ยวสำเร็จ PSID:", recipientId);
+        console.log("🖼 ส่งรูปภาพสำเร็จ PSID:", recipientId);
     } catch (error) {
         console.error("❌ Error sending image:", error.response?.data || error.message);
     }
-}
-
-// ฟังก์ชันส่งรูปภาพแบบอัลบั้มกลุ่ม (Media Template) ทาง Messenger
-async function sendMessengerAlbum(recipientId, imageUrls) {
-    try {
-        if (!PAGE_ACCESS_TOKEN || PAGE_ACCESS_TOKEN === "your_page_access_token_here") return;
-        
-        if (imageUrls.length > 1) {
-            let elements = imageUrls.slice(0, 10).map(url => ({
-                media_type: "image",
-                url: url
-            }));
-
-            await axios.post(`https://graph.facebook.com/v21.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`, {
-                recipient: { id: recipientId },
-                message: {
-                    attachment: {
-                        type: "template",
-                        payload: {
-                            template_type: "media",
-                            elements: elements
-                        }
-                    }
-                }
-            });
-            console.log(`🖼 ส่งอัลบั้มภาพ (${imageUrls.length} รูป) สำเร็จ PSID:`, recipientId);
-        } else if (imageUrls.length === 1) {
-            await sendMessengerImage(recipientId, imageUrls[0]);
-        }
-    } catch (error) {
-        console.error("❌ Error sending album:", error.response?.data || error.message);
-        // กรณีส่งแบบ Template ไม่ผ่าน ให้ fallback ส่งแยกทีละรูปเพื่อความปลอดภัย
-        for (let url of imageUrls) {
-            await sendMessengerImage(recipientId, url);
-        }
-    }
-}
-
-// --- ระบบคิวรวมรูปจาก Telegram สำหรับส่งเป็นอัลบั้มอัตโนมัติ ---
-let dbMediaQueues = {};
-
-async function queueAndSendMessengerAlbum(recipientId, imageUrl) {
-    if (!dbMediaQueues[recipientId]) {
-        dbMediaQueues[recipientId] = {
-            images: [],
-            timer: null
-        };
-    }
-
-    dbMediaQueues[recipientId].images.push(imageUrl);
-
-    if (dbMediaQueues[recipientId].timer) {
-        clearTimeout(dbMediaQueues[recipientId].timer);
-    }
-
-    dbMediaQueues[recipientId].timer = setTimeout(async () => {
-        let imagesToSend = dbMediaQueues[recipientId].images;
-        delete dbMediaQueues[recipientId];
-        await sendMessengerAlbum(recipientId, imagesToSend);
-    }, 1500); 
 }
 
 // 3. หน้าแรก
@@ -321,8 +261,8 @@ app.get('/customer', (req, res) => {
                     
                     <div style="width: 100%; display: flex; gap: 8px; align-items: center; margin-top: 5px; flex-wrap: wrap;">
                         <input type="file" id="imageFiles_${psid}" accept="image/*" multiple style="flex: 1; min-width: 220px; font-size: 13px; padding: 4px; background: #fff; border: 1px solid #ccc; border-radius: 4px;">
-                        <button onclick="sendOriginalImagesViaGitHub('${psid}')" style="background: #198754; color: white; border: none; padding: 8px 14px; border-radius: 4px; cursor: pointer; font-size: 14px; white-space: nowrap;">🖼 ส่งรูปภาพ (เป็นอัลบั้ม)</button>
-                        <button onclick="processAndSendZeroPrice('${psid}')" style="background: #d63384; color: white; border: none; padding: 8px 14px; border-radius: 4px; cursor: pointer; font-size: 14px; white-space: nowrap; font-weight: bold;">✨ แก้ไขราคา 0 บาท (เป็นอัลบั้ม)</button>
+                        <button onclick="sendOriginalImagesViaGitHub('${psid}')" style="background: #198754; color: white; border: none; padding: 8px 14px; border-radius: 4px; cursor: pointer; font-size: 14px; white-space: nowrap;">🖼 ส่งรูปภาพ (ไม่แก้ภาพ)</button>
+                        <button onclick="processAndSendZeroPrice('${psid}')" style="background: #d63384; color: white; border: none; padding: 8px 14px; border-radius: 4px; cursor: pointer; font-size: 14px; white-space: nowrap; font-weight: bold;">✨ แก้ไขราคา 0 บาท แล้วส่งทันที</button>
                     </div>
                 </div>
 
@@ -412,116 +352,68 @@ app.get('/customer', (req, res) => {
                 async function sendOriginalImagesViaGitHub(psid) {
                     let fileInput = document.getElementById('imageFiles_' + psid);
                     if (fileInput.files.length === 0) { alert("กรุณาเลือกไฟล์รูปภาพอย่างน้อย 1 รูปครับ"); return; }
-                    
-                    let files = Array.from(fileInput.files);
-                    alert("กำลังอัปโหลดและส่งรูปภาพ " + files.length + " รูป (รวมเป็นอัลบั้ม) กรุณารอสักครู่...");
-
-                    let uploadedUrls = [];
-                    for (let file of files) {
-                        let base64Data = await new Promise((resolve) => {
+                    alert("กำลังอัปโหลดและส่งรูปภาพต้นฉบับ " + fileInput.files.length + " รูป กรุณารอสักครู่...");
+                    for (let file of fileInput.files) {
+                        await new Promise((resolve) => {
                             let reader = new FileReader();
-                            reader.onload = (e) => resolve(e.target.result.split(',')[1]);
+                            reader.onload = function(e) {
+                                let base64Data = e.target.result.split(',')[1];
+                                fetch('/customer-action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'uploadAndSendImage', psid, filename: file.name, fileData: base64Data }) })
+                                .then(res => res.text()).then(() => { setTimeout(resolve, 800); }).catch(() => resolve());
+                            };
                             reader.readAsDataURL(file);
                         });
-
-                        let uniqueName = \`uploads/\${Date.now()}_\${Math.random().toString(36).substring(2, 6)}_\${file.name.replace(/[^a-zA-Z0-9_.-]/g, '_')}\`;
-                        await fetch('/customer-action', { 
-                            method: 'POST', 
-                            headers: { 'Content-Type': 'application/json' }, 
-                            body: JSON.stringify({ action: 'uploadOnly', psid, filename: uniqueName, fileData: base64Data }) 
-                        });
-                        
-                        let publicImageUrl = \`https://raw.githubusercontent.com/\${GITHUB_REPO}/main/\${uniqueName}\`;
-                        uploadedUrls.push(publicImageUrl);
                     }
-
-                    await fetch('/customer-action', { 
-                        method: 'POST', 
-                        headers: { 'Content-Type': 'application/json' }, 
-                        body: JSON.stringify({ action: 'sendAlbumBatch', psid, imageUrls: uploadedUrls }) 
-                    });
-
-                    alert("ส่งอัลบั้มรูปภาพสำเร็จเรียบร้อย!");
+                    alert("ส่งรูปภาพต้นฉบับทั้งหมดสำเร็จเรียบร้อย!");
                     fileInput.value = '';
                 }
-
                 async function processAndSendZeroPrice(psid) {
                     let fileInput = document.getElementById('imageFiles_' + psid);
                     if (fileInput.files.length === 0) { alert("กรุณาเลือกไฟล์รูปภาพอย่างน้อย 1 รูปครับ"); return; }
-                    
-                    let files = Array.from(fileInput.files);
-                    alert("กำลังแก้ไขราคา 0 บาท และส่งภาพ " + files.length + " รูป (รวมเป็นอัลบั้ม) กรุณารอสักครู่...");
-
-                    let uploadedUrls = [];
-                    for (let file of files) {
-                        let dataUrl = await new Promise((resolve) => {
+                    alert("กำลังแก้ไขราคาเป็น 0 บาท และส่งภาพ " + fileInput.files.length + " รูป กรุณารอสักครู่...");
+                    for (let file of fileInput.files) {
+                        await new Promise((resolve) => {
                             const reader = new FileReader();
-                            reader.onload = (e) => resolve(e.target.result);
+                            reader.onload = function(e) {
+                                const img = new Image();
+                                img.onload = function() {
+                                    const canvas = document.createElement('canvas');
+                                    const ctx = canvas.getContext('2d');
+                                    canvas.width = img.width; canvas.height = img.height;
+                                    ctx.drawImage(img, 0, 0);
+                                    const sampleX = Math.round(img.width * 0.85); const sampleY = Math.round(img.height * 0.52);
+                                    const pixel = ctx.getImageData(sampleX, sampleY, 1, 1).data;
+                                    const bgColor = \`rgb(\${pixel[0]}, \${pixel[1]}, \${pixel[2]})\`;
+                                    const searchStartX = Math.round(img.width * 0.045); const searchWidth = Math.round(img.width * 0.25);
+                                    const startY = Math.round(img.height * 0.48); const endY = Math.round(img.height * 0.55);
+                                    let seatLabelY = -1;
+                                    const imgData = ctx.getImageData(0, 0, img.width, img.height).data;
+                                    for (let y = startY; y <= endY; y++) {
+                                        for (let x = searchStartX; x <= searchStartX + searchWidth; x++) {
+                                            const idx = (y * img.width + x) * 4;
+                                            if (imgData[idx] > 160 && imgData[idx + 1] > 160 && imgData[idx + 2] > 160) { seatLabelY = y; break; }
+                                        }
+                                        if (seatLabelY !== -1) break;
+                                    }
+                                    let targetY = (seatLabelY !== -1) ? seatLabelY - (img.height * 0.035) : Math.round(img.height * 0.465);
+                                    const rectX = img.width * 0.045; const rectWidth = img.width * 0.32; const rectHeight = img.height * 0.030;
+                                    ctx.fillStyle = bgColor; ctx.fillRect(rectX, targetY, rectWidth, rectHeight);
+                                    const fontSize = Math.round(img.height * 0.0135);
+                                    ctx.font = \`bold \${fontSize}px 'Sukhumvit Set', 'Segoe UI', Tahoma, sans-serif\`;
+                                    ctx.fillStyle = '#E5A93C'; ctx.textBaseline = 'top';
+                                    ctx.fillText('0 บาท', rectX, targetY + (img.height * 0.005));
+                                    let cleanedDataUrl = canvas.toDataURL('image/png');
+                                    let base64Data = cleanedDataUrl.split(',')[1];
+                                    let fileNamePng = file.name.replace(/\\.[^/.]+$/, "") + ".png";
+                                    fetch('/customer-action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'uploadAndSendImage', psid, filename: fileNamePng, fileData: base64Data }) })
+                                    .then(res => res.text()).then(() => { setTimeout(resolve, 800); }).catch(() => resolve());
+                                };
+                                img.src = e.target.result;
+                            };
                             reader.readAsDataURL(file);
                         });
-
-                        let publicUrl = await new Promise((resolve) => {
-                            const img = new Image();
-                            img.onload = async function() {
-                                const canvas = document.createElement('canvas');
-                                const ctx = canvas.getContext('2d');
-                                canvas.width = img.width; canvas.height = img.height;
-                                ctx.drawImage(img, 0, 0);
-                                
-                                const sampleX = Math.round(img.width * 0.85); 
-                                const sampleY = Math.round(img.height * 0.52);
-                                const pixel = ctx.getImageData(sampleX, sampleY, 1, 1).data;
-                                const bgColor = \`rgb(\${pixel[0]}, \${pixel[1]}, \${pixel[2]})\`;
-                                
-                                const searchStartX = Math.round(img.width * 0.045); 
-                                const searchWidth = Math.round(img.width * 0.25);
-                                const startY = Math.round(img.height * 0.48); 
-                                const endY = Math.round(img.height * 0.55);
-                                
-                                let seatLabelY = -1;
-                                const imgData = ctx.getImageData(0, 0, img.width, img.height).data;
-                                for (let y = startY; y <= endY; y++) {
-                                    for (let x = searchStartX; x <= searchStartX + searchWidth; x++) {
-                                        const idx = (y * img.width + x) * 4;
-                                        if (imgData[idx] > 160 && imgData[idx + 1] > 160 && imgData[idx + 2] > 160) { seatLabelY = y; break; }
-                                    }
-                                    if (seatLabelY !== -1) break;
-                                }
-                                
-                                let targetY = (seatLabelY !== -1) ? seatLabelY - (img.height * 0.035) : Math.round(img.height * 0.465);
-                                const rectX = img.width * 0.045; const rectWidth = img.width * 0.32; const rectHeight = img.height * 0.030;
-                                ctx.fillStyle = bgColor; ctx.fillRect(rectX, targetY, rectWidth, rectHeight);
-                                
-                                const fontSize = Math.round(img.height * 0.0135);
-                                ctx.font = \`bold \${fontSize}px 'Sukhumvit Set', 'Segoe UI', Tahoma, sans-serif\`;
-                                ctx.fillStyle = '#E5A93C'; ctx.textBaseline = 'top';
-                                ctx.fillText('0 บาท', rectX, targetY + (img.height * 0.005));
-                                
-                                let cleanedDataUrl = canvas.toDataURL('image/png');
-                                let base64Data = cleanedDataUrl.split(',')[1];
-                                let uniqueName = \`uploads/edit_\${Date.now()}_\${Math.random().toString(36).substring(2, 6)}.png\`;
-
-                                await fetch('/customer-action', { 
-                                    method: 'POST', 
-                                    headers: { 'Content-Type': 'application/json' }, 
-                                    body: JSON.stringify({ action: 'uploadOnly', psid, filename: uniqueName, fileData: base64Data }) 
-                                });
-
-                                resolve(\`https://raw.githubusercontent.com/\${GITHUB_REPO}/main/\${uniqueName}\`);
-                            };
-                            img.src = dataUrl;
-                        });
-
-                        uploadedUrls.push(publicUrl);
                     }
-
-                    await fetch('/customer-action', { 
-                        method: 'POST', 
-                        headers: { 'Content-Type': 'application/json' }, 
-                        body: JSON.stringify({ action: 'sendAlbumBatch', psid, imageUrls: uploadedUrls }) 
-                    });
-
-                    alert("แก้ไขราคา 0 บาท และส่งอัลบั้มรูปภาพสำเร็จเรียบร้อย!");
+                    alert("แก้ไขราคาเป็น 0 บาท และส่งรูปภาพทั้งหมดสำเร็จเรียบร้อย!");
                     fileInput.value = '';
                 }
             </script>
@@ -553,7 +445,7 @@ function findPsidByNameQuery(nameQuery) {
 
 // 6. API จัดการข้อมูลและส่งข้อความ
 app.post('/customer-action', express.json({ limit: '20mb' }), async (req, res) => {
-    let { action, psid, date, index, amount, type, name, message, filename, fileData, time, imageUrls } = req.body;
+    let { action, psid, date, index, amount, type, name, message, filename, fileData, time } = req.body;
     let today = getThaiDate();
     if (!db[psid]) db[psid] = {};
     let timeNow = getThaiTime();
@@ -566,21 +458,22 @@ app.post('/customer-action', express.json({ limit: '20mb' }), async (req, res) =
         if (!message) return res.status(400).send("ไม่มีข้อความที่ต้องการส่ง");
         await sendMessengerMessage(psid, message);
         return res.send("ส่งข้อความหาลูกค้าเรียบร้อยแล้ว");
-    } else if (action === 'uploadOnly') {
+    } else if (action === 'uploadAndSendImage') {
         if (!fileData || !filename) return res.status(400).send("ไม่พบข้อมูลไฟล์รูปภาพ");
         try {
-            await axios.put(`https://api.github.com/repos/${GITHUB_REPO}/contents/${filename}`, {
+            let uniqueName = `uploads/${Date.now()}_${filename.replace(/[^a-zA-Z0-9_.-]/g, '_')}`;
+            await axios.put(`https://api.github.com/repos/${GITHUB_REPO}/contents/${uniqueName}`, {
                 message: 'Upload image via admin panel',
                 content: fileData
             }, { headers: { Authorization: `token ${GITHUB_TOKEN}` } });
-            return res.send("อัปโหลดสำเร็จ");
+
+            let publicImageUrl = `https://raw.githubusercontent.com/${GITHUB_REPO}/main/${uniqueName}`;
+            await sendMessengerImage(psid, publicImageUrl);
+            return res.send("อัปโหลดและส่งรูปสำเร็จ");
         } catch (err) {
-            return res.status(500).send("อัปโหลดไม่สำเร็จ");
+            console.error("❌ อัปโหลดรูปขึ้น GitHub ไม่สำเร็จ:", err.response?.data || err.message);
+            return res.status(500).send("อัปโหลดรูปไม่สำเร็จ");
         }
-    } else if (action === 'sendAlbumBatch') {
-        if (!imageUrls || imageUrls.length === 0) return res.status(400).send("ไม่พบรายการรูปภาพ");
-        await sendMessengerAlbum(psid, imageUrls);
-        return res.send("ส่งอัลบั้มสำเร็จ");
     } else if (action === 'add') {
         if (!db[psid][today]) db[psid][today] = [];
         db[psid][today].push({ time: timeNow, amount: amount });
@@ -762,7 +655,7 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
                 setAdminLock(lockedTargetPsid); 
             }
 
-            // 1. จัดการรูปภาพ (ผ่านระบบคิวอัลบั้ม)
+            // 1. จัดการรูปภาพ
             if (photoArray && photoArray.length > 0) {
                 let largestPhoto = photoArray[photoArray.length - 1];
                 let fileId = largestPhoto.file_id;
@@ -787,8 +680,8 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
 
                         let publicImageUrl = `https://raw.githubusercontent.com/${GITHUB_REPO}/main/${uniqueName}`;
 
-                        await queueAndSendMessengerAlbum(lockedTargetPsid, publicImageUrl);
-                        await sendTelegramMessage(`🖼 กำลังรวบรวมรูปภาพส่งไปยังแชท <b>${custName}</b> เป็นอัลบั้ม...`);
+                        await sendMessengerImage(lockedTargetPsid, publicImageUrl);
+                        await sendTelegramMessage(`🖼 ส่งรูปภาพไปยังแชท <b>${custName}</b> สำเร็จ!`);
 
                     } else {
                         await sendTelegramMessage(`❌ ไม่พบเป้าหมายลูกค้าในระบบที่จะส่งรูปไป`);
