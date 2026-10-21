@@ -781,3 +781,29 @@ const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
     console.log(`Webhook server is running on port ${PORT}`);
 });
+// ฟังก์ชันส่งปุ่มเมนูรายชื่อให้แอดมินใน Telegram อัตโนมัติเมื่อเริ่มระบบ
+async function sendAdminMenuButtons() {
+    if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
+    try {
+        await axios.post(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+            chat_id: TELEGRAM_CHAT_ID,
+            text: "🚀 <b>ระบบบอทพร้อมใช้งานแล้ว!</b>\nเลือกชื่อลูกค้าจากปุ่มด้านล่างเพื่อส่งรูปหรือจัดการยอดได้เลยครับ:",
+            parse_mode: 'HTML',
+            reply_markup: {
+                keyboard: [
+                    ["พี่บอย", "มาดามแป้ง"],
+                    ["ดาอี"]
+                ],
+                resize_keyboard: true,
+                is_persistent: true
+            }
+        });
+    } catch (err) {
+        console.error("❌ ส่งปุ่มเมนูไม่สำเร็จ:", err.response?.data || err.message);
+    }
+}
+
+// เรียกใช้งานฟังก์ชันส่งปุ่มเมนูหลังจากบอทสตาร์ท
+setTimeout(() => {
+    sendAdminMenuButtons();
+}, 3000);
