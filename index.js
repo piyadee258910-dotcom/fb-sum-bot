@@ -12,10 +12,8 @@ const GITHUB_REPO = process.env.GITHUB_REPO || "piyadee258910-dotcom/fb-sum-bot"
 
 let db = {};
 let recentCustomers = {};
-let db = {};
-let recentCustomers = {};
 
-// ✨ เพิ่มฟังก์ชันดึงเวลาและวันที่ปัจจุบันของประเทศไทย (UTC+7) ตรงนี้ครับ
+// ฟังก์ชันดึงเวลาปัจจุบันของประเทศไทย (HH:MM)
 function getThaiTime() {
     return new Date().toLocaleTimeString('en-GB', { 
         timeZone: 'Asia/Bangkok', 
@@ -25,6 +23,7 @@ function getThaiTime() {
     });
 }
 
+// ฟังก์ชันดึงวันที่ปัจจุบันของประเทศไทย (YYYY-MM-DD)
 function getThaiDate() {
     let formatter = new Intl.DateTimeFormat('en-CA', {
         timeZone: 'Asia/Bangkok',
@@ -34,6 +33,7 @@ function getThaiDate() {
     });
     return formatter.format(new Date());
 }
+
 // 1. ฟังก์ชันดึงข้อมูลจาก GitHub
 async function loadDataFromGitHub() {
     try {
@@ -430,10 +430,10 @@ function sortItemsByTime(itemsArray) {
 // 6. API จัดการข้อมูลและส่งข้อความ
 app.post('/customer-action', express.json({ limit: '20mb' }), async (req, res) => {
     let { action, psid, date, index, amount, type, name, message, filename, fileData } = req.body;
-    let today = new Date().toISOString().split('T')[0];
+    let today = getThaiDate();
     if (!db[psid]) db[psid] = {};
 
-    let timeNow = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+    let timeNow = getThaiTime();
 
     if (action === 'setName') {
         db[psid].name = name;
@@ -538,9 +538,9 @@ app.post('/webhook', async (req, res) => {
 
             if (webhook_event.message && webhook_event.message.text) {
                 let incomingText = webhook_event.message.text.trim();
-                recentCustomers[senderPSID] = { lastMessage: incomingText, time: new Date().toLocaleTimeString() };
+                recentCustomers[senderPSID] = { lastMessage: incomingText, time: getThaiTime() };
 
-                let today = new Date().toISOString().split('T')[0];
+                let today = getThaiDate();
                 if (!db[senderPSID]) db[senderPSID] = {};
                 if (!db[senderPSID][today]) db[senderPSID][today] = [];
 
@@ -548,7 +548,7 @@ app.post('/webhook', async (req, res) => {
                 if (incomingText.startsWith('.')) {
                     let amount = parseFloat(incomingText.replace(/^\.+/, ''));
                     if (!isNaN(amount)) {
-                        let timeNow = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+                        let timeNow = getThaiTime();
                         db[senderPSID][today].push({ time: timeNow, amount: amount });
                         
                         sortItemsByTime(db[senderPSID][today]);
@@ -574,17 +574,17 @@ app.get('/admin-test', async (req, res) => {
     let text = req.query.text;
     if (!psid || !text) return res.send("❌ กรุณาระบุ ?id=PSID&text=ข้อความ");
 
-    let today = new Date().toISOString().split('T')[0];
+    let today = getThaiDate();
     if (!db[psid]) db[psid] = {};
     if (!db[psid][today]) db[psid][today] = [];
 
     let amount = parseFloat(text.replace(/^\.+/, ''));
     let replyMessage = "";
     if (!isNaN(amount)) {
-        let timeNow = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+        let timeNow = getThaiTime();
         db[psid][today].push({ time: timeNow, amount: amount });
         
-        sortItemsByTime(db[psid][today]);
+        sortItems, sortItemsByTime(db[psid][today]);
         await saveToGitHub();
 
         let total = db[psid][today].reduce((sum, item) => sum + item.amount, 0);
