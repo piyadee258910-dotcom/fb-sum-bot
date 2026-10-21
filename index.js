@@ -352,11 +352,7 @@ app.get('/customer', (req, res) => {
                     .then(res => res.json())
                     .then(data => {
                         if (data && data.text) {
-                            navigator.clipboard.writeText(data.text).then(() => {
-                                alert("📋 คัดลอกข้อความสรุปยอดวันที่ " + date + " เรียบร้อย!\nสามารถกด Ctrl+V วางในแชทเพจได้เลยครับ");
-                            }).catch(err => {
-                                alert("❌ คัดลอกไม่สำเร็จ: " + err);
-                            });
+                            window.prompt("📋 คัดลอกข้อความด้านล่างนี้ (กด Ctrl+C แล้วกด Enter):", data.text);
                         } else {
                             alert("❌ ไม่พบข้อมูลยอดของวันนี้");
                         }
