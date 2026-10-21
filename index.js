@@ -586,6 +586,7 @@ app.post('/webhook', async (req, res) => {
     }
 });
 
+
 // 8. Webhook สำหรับรับคำสั่งจาก Telegram (แอดมินพิมพ์คุยโต้ตอบและสั่งงาน)
 app.post('/telegram-webhook', express.json(), async (req, res) => {
     let update = req.body;
@@ -595,9 +596,10 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
         if (TELEGRAM_CHAT_ID && chatId === String(TELEGRAM_CHAT_ID)) {
             let text = update.message.text || update.message.caption || "";
             let photoArray = update.message.photo;
-            let lastPsid = Object.keys(recentCustomers)[Object.keys(recentCustomers).length - 1];
 
-            let targetPsid = lastPsid;
+            // 🔒 ล็อกเป้าหมาย (Target PSID) ให้เสถียรทันทีเมื่อ Webhook ยิงเข้ามา
+            let recentKeys = Object.keys(recentCustomers);
+            let targetPsid = recentKeys.length > 0 ? recentKeys[recentKeys.length - 1] : null;
             let actualText = text;
 
             if (text) {
@@ -609,71 +611,79 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
                 }
             }
 
-            // 1. จัดการรูปภาพ (ปรับปรุงใหม่ให้อัปโหลดขึ้น GitHub ก่อนส่งเข้า Messenger)
-if (photoArray && photoArray.length > 0) {
-    let largestPhoto = photoArray[photoArray.length - 1];
-    let fileId = largestPhoto.file_id;
+            if (!targetPsid) {
+                let allPsids = Object.keys(db);
+                if (allPsids.length > 0) {
+                    targetPsid = allPsids[allPsids.length - 1];
+                }
+            }
 
-    try {
-        // ดึง File Path จาก Telegram
-        let fileRes = await axios.get(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getFile?file_id=${fileId}`);
-        let filePath = fileRes.data.result.file_path;
-        let telegramPhotoUrl = `https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${filePath}`;
+            // บันทึกตัวแปรเฉพาะของ request นี้ไว้กันค่าเปลี่ยนระหว่างรัน async
+            const lockedTargetPsid = targetPsid;
 
-        if (targetPsid) {
-            let custName = db[targetPsid]?.name || targetPsid;
-            await sendTelegramMessage(`⏳กำลังประมวลผลและส่งรูปภาพไปยังแชท <b>${custName}</b>...`);
+            // 1. จัดการรูปภาพ
+            if (photoArray && photoArray.length > 0) {
+                let largestPhoto = photoArray[photoArray.length - 1];
+                let fileId = largestPhoto.file_id;
 
-            // ดาวน์โหลดรูปภาพมาเป็น buffer
-            let imageResponse = await axios.get(telegramPhotoUrl, { responseType: 'arraybuffer' });
-            let base64Image = Buffer.from(imageResponse.data).from ? Buffer.from(imageResponse.data).toString('base64') : Buffer.from(imageResponse.data, 'binary').toString('base64');
-            
-            // ตั้งชื่อไฟล์ชั่วคราวบน GitHub
-            let uniqueName = `uploads/tg_${Date.now()}.jpg`;
+                try {
+                    let fileRes = await axios.get(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getFile?file_id=${fileId}`);
+                    let filePath = fileRes.data.result.file_path;
+                    let telegramPhotoUrl = `https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${filePath}`;
 
-            // อัปโหลดขึ้น GitHub repository ของคุณ
-            await axios.put(`https://api.github.com/repos/${GITHUB_REPO}/contents/${uniqueName}`, {
-                message: 'Upload image from Telegram bot',
-                content: base64Image
-            }, { headers: { Authorization: `token ${GITHUB_TOKEN}` } });
+                    if (lockedTargetPsid) {
+                        let custName = db[lockedTargetPsid]?.name || lockedTargetPsid;
+                        
+                        // ดาวน์โหลดรูปภาพมาเป็น buffer
+                        let imageResponse = await axios.get(telegramPhotoUrl, { responseType: 'arraybuffer' });
+                        let base64Image = Buffer.from(imageResponse.data).toString('base64');
+                        
+                        // ตั้งชื่อไฟล์ชั่วคราวบน GitHub พร้อมสุ่มป้องกันชื่อซ้ำ
+                        let uniqueName = `uploads/tg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.jpg`;
 
-            // สร้าง Public URL จาก GitHub เพื่อส่งให้ Facebook
-            let publicImageUrl = `https://raw.githubusercontent.com/${GITHUB_REPO}/main/${uniqueName}`;
+                        // อัปโหลดขึ้น GitHub repository
+                        await axios.put(`https://api.github.com/repos/${GITHUB_REPO}/contents/${uniqueName}`, {
+                            message: 'Upload image from Telegram bot',
+                            content: base64Image
+                        }, { headers: { Authorization: `token ${GITHUB_TOKEN}` } });
 
-            // ส่งรูปผ่าน Messenger API
-            await sendMessengerImage(targetPsid, publicImageUrl);
-            await sendTelegramMessage(`🖼 ส่งรูปภาพไปยังแชท <b>${custName}</b> สำเร็จ!`);
-        } else {
-            await sendTelegramMessage(`❌ ไม่พบเป้าหมายลูกค้าที่จะส่งรูปภาพไป`);
-        }
-    } catch (imgErr) {
-        console.error("❌ ส่งรูปจาก Telegram ไป FB ไม่สำเร็จ:", imgErr.response?.data || imgErr.message);
-        await sendTelegramMessage(`❌ ส่งรูปภาพไม่สำเร็จ: ${imgErr.message}`);
-    }
-}
+                        // สร้าง Public URL จาก GitHub
+                        let publicImageUrl = `https://raw.githubusercontent.com/${GITHUB_REPO}/main/${uniqueName}`;
 
-            // 2. จัดการข้อความ/คำสั่ง
+                        // ส่งรูปผ่าน Messenger API ไปยังเป้าหมายที่ล็อกไว้ (lockedTargetPsid)
+                        await sendMessengerImage(lockedTargetPsid, publicImageUrl);
+                        await sendTelegramMessage(`🖼 ส่งรูปภาพไปยังแชท <b>${custName}</b> สำเร็จ!`);
+                    } else {
+                        await sendTelegramMessage(`❌ ไม่พบเป้าหมายลูกค้าที่จะส่งรูปภาพไป`);
+                    }
+                } catch (imgErr) {
+                    console.error("❌ ส่งรูปจาก Telegram ไป FB ไม่สำเร็จ:", imgErr.response?.data || imgErr.message);
+                    await sendTelegramMessage(`❌ ส่งรูปภาพไม่สำเร็จ: ${imgErr.message}`);
+                }
+            }
+
+            // 2. จัดการข้อความ/คำสั่ง (ใช้ lockedTargetPsid เช่นกัน)
             if (actualText) {
                 let today = getThaiDate();
-                if (targetPsid) {
-                    let custName = db[targetPsid]?.name || targetPsid;
+                if (lockedTargetPsid) {
+                    let custName = db[lockedTargetPsid]?.name || lockedTargetPsid;
 
                     if (actualText.startsWith('.')) {
                         let amount = parseFloat(actualText.replace(/^\.+/, ''));
                         if (!isNaN(amount)) {
-                            if (!db[targetPsid]) db[targetPsid] = {};
-                            if (!db[targetPsid][today]) db[targetPsid][today] = [];
+                            if (!db[lockedTargetPsid]) db[lockedTargetPsid] = {};
+                            if (!db[lockedTargetPsid][today]) db[lockedTargetPsid][today] = [];
                             let timeNow = getThaiTime();
 
-                            db[targetPsid][today].push({ time: timeNow, amount: amount });
-                            sortItemsByTime(db[targetPsid][today]);
+                            db[lockedTargetPsid][today].push({ time: timeNow, amount: amount });
+                            sortItemsByTime(db[lockedTargetPsid][today]);
                             await saveToGitHub();
 
-                            let total = db[targetPsid][today].reduce((sum, item) => sum + item.amount, 0);
-                            let listText = db[targetPsid][today].map((item, idx) => `${idx + 1}. [${item.time}] +${item.amount}`).join('\n');
+                            let total = db[lockedTargetPsid][today].reduce((sum, item) => sum + item.amount, 0);
+                            let listText = db[lockedTargetPsid][today].map((item, idx) => `${idx + 1}. [${item.time}] +${item.amount}`).join('\n');
                             let reportMsg = `📅 [${today}] รายการประจำวัน:\n${listText}\n-------------------\n💰 ยอดรวมของวัน: ${total} บาท`;
                             
-                            await sendMessengerMessage(targetPsid, reportMsg);
+                            await sendMessengerMessage(lockedTargetPsid, reportMsg);
                             await sendTelegramMessage(`✅ บันทึกยอด +${amount} ให้ <b>${custName}</b> และส่งยอดให้ลูกค้าแล้ว! (ยอดวันนี้: ${total} บาท)`);
                         }
                     } else if (actualText.includes(" ")) {
@@ -682,21 +692,21 @@ if (photoArray && photoArray.length > 0) {
 
                         if ((timeCandidate.includes(":") || timeCandidate.includes(".")) && !isNaN(amountCandidate)) {
                             let formattedTime = timeCandidate.replace('.', ':');
-                            if (!db[targetPsid]) db[targetPsid] = {};
-                            if (!db[targetPsid][today]) db[targetPsid][today] = [];
+                            if (!db[lockedTargetPsid]) db[lockedTargetPsid] = {};
+                            if (!db[lockedTargetPsid][today]) db[lockedTargetPsid][today] = [];
 
-                            db[targetPsid][today].push({ time: formattedTime, amount: amountCandidate });
-                            sortItemsByTime(db[targetPsid][today]);
+                            db[lockedTargetPsid][today].push({ time: formattedTime, amount: amountCandidate });
+                            sortItemsByTime(db[lockedTargetPsid][today]);
                             await saveToGitHub();
 
-                            let total = db[targetPsid][today].reduce((sum, item) => sum + item.amount, 0);
+                            let total = db[lockedTargetPsid][today].reduce((sum, item) => sum + item.amount, 0);
                             await sendTelegramMessage(`✨ บันทึกตกแต่งยอด [${formattedTime}] +${amountCandidate} ให้ <b>${custName}</b> สำเร็จ! (ยอดวันนี้: ${total} บาท)`);
                         } else {
-                            await sendMessengerMessage(targetPsid, actualText);
+                            await sendMessengerMessage(lockedTargetPsid, actualText);
                             await sendTelegramMessage(`📤 ส่งข้อความหา <b>${custName}</b> เรียบร้อย:\n"${actualText}"`);
                         }
                     } else {
-                        await sendMessengerMessage(targetPsid, actualText);
+                        await sendMessengerMessage(lockedTargetPsid, actualText);
                         await sendTelegramMessage(`📤 ส่งข้อความหา <b>${custName}</b> เรียบร้อย:\n"${actualText}"`);
                     }
                 } else {
