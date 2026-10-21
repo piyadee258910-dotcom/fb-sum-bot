@@ -12,7 +12,28 @@ const GITHUB_REPO = process.env.GITHUB_REPO || "piyadee258910-dotcom/fb-sum-bot"
 
 let db = {};
 let recentCustomers = {};
+let db = {};
+let recentCustomers = {};
 
+// ✨ เพิ่มฟังก์ชันดึงเวลาและวันที่ปัจจุบันของประเทศไทย (UTC+7) ตรงนี้ครับ
+function getThaiTime() {
+    return new Date().toLocaleTimeString('en-GB', { 
+        timeZone: 'Asia/Bangkok', 
+        hour: '2-digit', 
+        minute: '2-digit',
+        hour12: false 
+    });
+}
+
+function getThaiDate() {
+    let formatter = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Bangkok',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+    });
+    return formatter.format(new Date());
+}
 // 1. ฟังก์ชันดึงข้อมูลจาก GitHub
 async function loadDataFromGitHub() {
     try {
