@@ -209,6 +209,7 @@ app.get('/customer', (req, res) => {
                         <button onclick="setName('${psid}', '${customerName === 'ยังไม่ได้ตั้งชื่อเล่น' ? '' : customerName}')" style="background: #17a2b8; color: white; border: none; padding: 8px 12px; border-radius: 5px; cursor: pointer; margin-right: 5px;">✏️ ตั้งชื่อเล่น</button>
                         <button onclick="sendReport('${psid}', 'all', '')" style="background: #6610f2; color: white; border: none; padding: 8px 12px; border-radius: 5px; cursor: pointer; margin-right: 5px;">📨 ส่งยอดทั้งหมด</button>
                         <button onclick="addAmount('${psid}')" style="background: #28a745; color: white; border: none; padding: 8px 12px; border-radius: 5px; cursor: pointer; margin-right: 5px;">+ เพิ่มยอด</button>
+                        <button onclick="customAddAmount('${psid}')" style="background: #fd7e14; color: white; border: none; padding: 8px 12px; border-radius: 5px; cursor: pointer; margin-right: 5px;">✨ ตกแต่งยอด</button>
                         <button onclick="clearAllCustomer('${psid}')" style="background: #343a40; color: white; border: none; padding: 8px 12px; border-radius: 5px; cursor: pointer;">🔥 ล้างทั้งหมด</button>
                     </div>
                 </div>
@@ -262,6 +263,34 @@ app.get('/customer', (req, res) => {
                         .then(res => res.text()).then(data => { alert(data); location.reload(); });
                     }
                 }
+                // ✨ ฟังก์ชันตกแต่งยอด (ใส่เวลาและจำนวนเงินเองได้ ไม่ส่งหาลูกค้า)
+                function customAddAmount(psid) {
+                    let input = prompt("กรอกเวลาและจำนวนเงิน (ตัวอย่าง: 17.00 200 หรือ 17:00 200):");
+                    if (!input) return;
+                    
+                    let parts = input.trim().split(/\\s+/);
+                    if (parts.length < 2) {
+                        alert("กรุณากรอกรูปแบบให้ถูกต้อง เช่น 17.00 200");
+                        return;
+                    }
+                    
+                    let timeInput = parts[0].replace('.', ':');
+                    let amountInput = parseFloat(parts[1]);
+                    
+                    if (isNaN(amountInput)) {
+                        alert("จำนวนเงินไม่ถูกต้อง");
+                        return;
+                    }
+
+                    fetch('/customer-action', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ action: 'customAdd', psid, time: timeInput, amount: amountInput })
+                    })
+                    .then(res => res.text())
+                    .then(data => { alert(data); location.reload(); });
+                }
+
                 function editItem(psid, date, index, oldAmount) {
                     let newAmount = prompt("แก้ไขจำนวนเงินใหม่:", oldAmount);
                     if (newAmount && !isNaN(newAmount)) {
@@ -423,13 +452,14 @@ app.get('/customer', (req, res) => {
     `);
 });
 
+// ฟังก์ชันช่วยจัดเรียงรายการในแต่ละวันตามเวลา
 function sortItemsByTime(itemsArray) {
     return itemsArray.sort((a, b) => a.time.localeCompare(b.time));
 }
 
 // 6. API จัดการข้อมูลและส่งข้อความ
 app.post('/customer-action', express.json({ limit: '20mb' }), async (req, res) => {
-    let { action, psid, date, index, amount, type, name, message, filename, fileData } = req.body;
+    let { action, psid, date, index, amount, type, name, message, filename, fileData, time } = req.body;
     let today = getThaiDate();
     if (!db[psid]) db[psid] = {};
 
@@ -474,6 +504,15 @@ app.post('/customer-action', express.json({ limit: '20mb' }), async (req, res) =
         await sendMessengerMessage(psid, reportMsg);
 
         res.send("เพิ่มยอดและส่งข้อความหาลูกค้าสำเร็จ!");
+    } else if (action === 'customAdd') {
+        // ✨ ฟังก์ชันรับยอดที่แอดมินระบุเวลาและจำนวนเงินเอง (ไม่ส่งหาลูกค้า)
+        if (!db[psid][today]) db[psid][today] = [];
+        db[psid][today].push({ time: time, amount: amount });
+        
+        sortItemsByTime(db[psid][today]);
+        await saveToGitHub();
+
+        return res.send("บันทึกตกแต่งยอดเรียบร้อย (จัดเรียงเวลาและไมjได้ส่งหาลูกค้า)");
     } else if (action === 'edit') {
         if (db[psid][date] && db[psid][date][index]) {
             db[psid][date][index].amount = amount;
@@ -584,7 +623,7 @@ app.get('/admin-test', async (req, res) => {
         let timeNow = getThaiTime();
         db[psid][today].push({ time: timeNow, amount: amount });
         
-        sortItems, sortItemsByTime(db[psid][today]);
+        sortItemsByTime(db[psid][today]);
         await saveToGitHub();
 
         let total = db[psid][today].reduce((sum, item) => sum + item.amount, 0);
