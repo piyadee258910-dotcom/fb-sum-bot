@@ -674,26 +674,53 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
     if (update.message && update.message.chat) {
         let chatId = String(update.message.chat.id);
         
-        // เช็กว่าเป็นแอดมินตัวจริงส่งมาหรือไม่ (เทียบกับ TELEGRAM_CHAT_ID)
+        // เช็กว่าเป็นแอดมินตัวจริงส่งมาหรือไม่
         if (TELEGRAM_CHAT_ID && chatId === String(TELEGRAM_CHAT_ID)) {
             let text = update.message.text || update.message.caption || "";
             let photoArray = update.message.photo;
-
-            // หาลูกค้ารายล่าสุดจาก recentCustomers เผื่อกรณีพิมพ์ชื่อย่อหรือส่งรูปด่วน
             let lastPsid = Object.keys(recentCustomers)[Object.keys(recentCustomers).length - 1];
 
-            if (text) {
+            // 1. ถ้ามีการส่งรูปภาพมาด้วย (ไม่ว่าจะมาเดี่ยวๆ หรือมีข้อความพิมพ์แนบมาพร้อมกัน)
+            if (photoArray && photoArray.length > 0) {
+                let largestPhoto = photoArray[photoArray.length - 1];
+                let fileId = largestPhoto.file_id;
+
+                try {
+                    let fileRes = await axios.get(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getFile?file_id=${fileId}`);
+                    let filePath = fileRes.data.result.file_path;
+                    let telegramPhotoUrl = `https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${filePath}`;
+
+                    let targetPsid = lastPsid;
+                    if (text) {
+                        let parts = text.trim().split(/\s+/);
+                        let found = findPsidByNameQuery(parts[0]);
+                        if (found) targetPsid = found;
+                    }
+
+                    if (targetPsid) {
+                        await sendMessengerImage(targetPsid, telegramPhotoUrl);
+                        let custName = db[targetPsid]?.name || targetPsid;
+                        await sendTelegramMessage(`🖼️ ส่งรูปภาพไปยังแชท <b>${custName}</b> สำเร็จ!`);
+                    } else {
+                        await sendTelegramMessage(`❌ ไม่พบเป้าหมายลูกค้าที่จะส่งรูปภาพไป`);
+                    }
+                } catch (imgErr) {
+                    console.error("❌ ส่งรูปจาก Telegram ไป FB ไม่สำเร็จ:", imgErr.message);
+                    await sendTelegramMessage(`❌ ส่งรูปภาพไม่สำเร็จ`);
+                }
+            }
+
+            // 2. ถ้ามีข้อความตัวหนังสือ (แยกจัดการคำสั่งเพิ่มยอดหรือส่งข้อความปกติ)
+            if (text && (!photoArray || photoArray.length === 0)) {
                 let parts = text.trim().split(/\s+/);
                 let targetNameQuery = parts[0];
                 let targetPsid = findPsidByNameQuery(targetNameQuery);
 
                 if (targetPsid) {
-                    // ตัดชื่อลูกค้าออก เอาข้อความหรือคำสั่งที่เหลือ
                     let remainder = parts.slice(1).join(" ");
                     let today = getThaiDate();
 
                     if (remainder.startsWith('.')) {
-                        // รูปแบบคำสั่งเพิ่มยอด เช่น "พี่บอย ..200" หรือ "พี่บอย .500"
                         let amount = parseFloat(remainder.replace(/^\.+/, ''));
                         if (!isNaN(amount)) {
                             if (!db[targetPsid]) db[targetPsid] = {};
@@ -709,7 +736,6 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
                             await sendTelegramMessage(`✅ บันทึกยอด +${amount} ให้ <b>${custName}</b> สำเร็จ! (ยอดวันนี้: ${total} บาท)`);
                         }
                     } else if (remainder.includes(" ")) {
-                        // รูปแบบระบุเวลาและยอด เช่น "พี่บอย 17.00 200"
                         let timeCandidate = remainder.split(" ")[0];
                         let amountCandidate = parseFloat(remainder.split(" ")[1]);
 
@@ -726,53 +752,21 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
                             let total = db[targetPsid][today].reduce((sum, item) => sum + item.amount, 0);
                             await sendTelegramMessage(`✨ บันทึกตกแต่งยอด [${formattedTime}] +${amountCandidate} ให้ <b>${custName}</b> สำเร็จ! (ยอดวันนี้: ${total} บาท)`);
                         } else {
-                            // ส่งข้อความหาลูกค้าปกติ
                             let custName = db[targetPsid].name || targetPsid;
                             await sendMessengerMessage(targetPsid, remainder);
                             await sendTelegramMessage(`📤 ส่งข้อความหา <b>${custName}</b> เรียบร้อย:\n"${remainder}"`);
                         }
                     } else if (remainder) {
-                        // ส่งข้อความหาลูกค้าปกติ
                         let custName = db[targetPsid].name || targetPsid;
                         await sendMessengerMessage(targetPsid, remainder);
                         await sendTelegramMessage(`📤 ส่งข้อความหา <b>${custName}</b> เรียบร้อย:\n"${remainder}"`);
                     }
                 } else if (lastPsid && recentCustomers[lastPsid]) {
-                    // ถ้าไม่ได้พิมพ์ชื่อขึ้นต้น แต่พิมพ์ข้อความ ส่งหาลูกค้ารายล่าสุดทันที
                     await sendMessengerMessage(lastPsid, text);
                     let custName = db[lastPsid]?.name || lastPsid;
                     await sendTelegramMessage(`📤 ส่งข้อความหาลูกค้ารายล่าสุด [<b>${custName}</b>]:\n"${text}"`);
                 } else {
                     await sendTelegramMessage(`❌ ไม่พบชื่อลูกค้า "${targetNameQuery}" ในระบบ`);
-                }
-            }
-
-            // กรณีแอดมินส่งรูปภาพมาทาง Telegram พร้อมแคปชั่นชื่อลูกค้า
-            if (photoArray && photoArray.length > 0) {
-                let largestPhoto = photoArray[photoArray.length - 1];
-                let fileId = largestPhoto.file_id;
-
-                try {
-                    let fileRes = await axios.get(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getFile?file_id=${fileId}`);
-                    let filePath = fileRes.data.result.file_path;
-                    let telegramPhotoUrl = `https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${filePath}`;
-
-                    let targetPsid = lastPsid;
-                    if (text) {
-                        let found = findPsidByNameQuery(text);
-                        if (found) targetPsid = found;
-                    }
-
-                    if (targetPsid) {
-                        await sendMessengerImage(targetPsid, telegramPhotoUrl);
-                        let custName = db[targetPsid]?.name || targetPsid;
-                        await sendTelegramMessage(`🖼️ ส่งรูปภาพไปยังแชท <b>${custName}</b> สำเร็จ!`);
-                    } else {
-                        await sendTelegramMessage(`❌ ไม่พบเป้าหมายลูกค้าที่จะส่งรูปภาพไป`);
-                    }
-                } catch (imgErr) {
-                    console.error("❌ ส่งรูปจาก Telegram ไป FB ไม่สำเร็จ:", imgErr.message);
-                    await sendTelegramMessage(`❌ ส่งรูปภาพไม่สำเร็จ`);
                 }
             }
         }
