@@ -10,6 +10,9 @@ const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN || "your_page_access_tok
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN; 
 const GITHUB_REPO = process.env.GITHUB_REPO || "piyadee258910-dotcom/fb-sum-bot"; 
 
+// LINE OA Config จาก Environment Variables บน Render
+const LINE_CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN;
+
 // Telegram Config จาก Environment Variables บน Render
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
@@ -38,7 +41,7 @@ function getThaiDate() {
     return formatter.format(new Date());
 }
 
-// ฟังก์ชันส่งข้อความแจ้งเตือนไป Telegram (พร้อมปุ่มเมนูด้านล่าง)
+// ฟังก์ชันส่งข้อความแจ้งเตือนไป Telegram
 async function sendTelegramMessage(text) {
     if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
     try {
@@ -118,7 +121,7 @@ async function saveToGitHub() {
 
 loadDataFromGitHub();
 
-// ฟังก์ชันส่งข้อความตัวอักษรทาง Messenger
+// ฟังก์ชันส่งข้อความทาง Messenger
 async function sendMessengerMessage(recipientId, messageText) {
     try {
         if (!PAGE_ACCESS_TOKEN || PAGE_ACCESS_TOKEN === "your_page_access_token_here") return;
@@ -147,9 +150,26 @@ async function sendMessengerImage(recipientId, imageUrl) {
                 }
             }
         });
-        console.log("🖼 ส่งรูปภาพสำเร็จ PSID:", recipientId);
     } catch (error) {
         console.error("❌ Error sending image:", error.response?.data || error.message);
+    }
+}
+
+// ฟังก์ชันส่งข้อความทาง LINE OA
+async function sendLineMessage(userId, messageText) {
+    if (!LINE_CHANNEL_ACCESS_TOKEN) return;
+    try {
+        await axios.post('https://api.line.me/v2/bot/message/push', {
+            to: userId,
+            messages: [{ type: 'text', text: messageText }]
+        }, {
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}`
+            }
+        });
+    } catch (error) {
+        console.error("❌ Error sending LINE message:", error.response?.data || error.message);
     }
 }
 
@@ -166,7 +186,7 @@ app.get('/admin', (req, res) => {
         customerListHTML += `
             <div style="background: #fff; padding: 15px; margin-bottom: 12px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); display: flex; justify-content: space-between; align-items: center;">
                 <div>
-                    <strong>PSID:</strong> ${psid} <br>
+                    <strong>ID/PSID:</strong> ${psid} <br>
                     <small style="color: #666;">ข้อความล่าสุด: ${cust.lastMessage || '-'}</small>
                 </div>
                 <div>
@@ -244,7 +264,7 @@ app.get('/customer', (req, res) => {
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
                     <div>
                         <h3 style="margin: 0; color: #333;">👤 ชื่อเล่น: <span style="color: #007bff;">${customerName}</span></h3>
-                        <p style="margin: 4px 0 0 0; color: #888; font-size: 12px;">PSID: ${psid}</p>
+                        <p style="margin: 4px 0 0 0; color: #888; font-size: 12px;">ID: ${psid}</p>
                         <p style="margin: 5px 0 0 0; color: #666; font-size: 14px;">ยอดสะสมรวมทั้งหมด: <strong>${totalAllDays} บาท</strong></p>
                     </div>
                     <div>
@@ -259,12 +279,6 @@ app.get('/customer', (req, res) => {
                 <div style="background: #eef2f7; padding: 10px; border-radius: 6px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
                     <input type="text" id="customMsg_${psid}" placeholder="💬 พิมพ์ข้อความอิสระ..." style="flex: 1; min-width: 200px; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px;">
                     <button onclick="sendCustomMessage('${psid}')" style="background: #007bff; color: white; border: none; padding: 8px 14px; border-radius: 4px; cursor: pointer; font-size: 14px; white-space: nowrap;">📨 ส่งข้อความ</button>
-                    
-                    <div style="width: 100%; display: flex; gap: 8px; align-items: center; margin-top: 5px; flex-wrap: wrap;">
-                        <input type="file" id="imageFiles_${psid}" accept="image/*" multiple style="flex: 1; min-width: 220px; font-size: 13px; padding: 4px; background: #fff; border: 1px solid #ccc; border-radius: 4px;">
-                        <button onclick="sendOriginalImagesViaGitHub('${psid}')" style="background: #198754; color: white; border: none; padding: 8px 14px; border-radius: 4px; cursor: pointer; font-size: 14px; white-space: nowrap;">🖼 ส่งรูปภาพ (ไม่แก้ภาพ)</button>
-                        <button onclick="processAndSendZeroPrice('${psid}')" style="background: #d63384; color: white; border: none; padding: 8px 14px; border-radius: 4px; cursor: pointer; font-size: 14px; white-space: nowrap; font-weight: bold;">✨ แก้ไขราคา 0 บาท แล้วส่งทันที</button>
-                    </div>
                 </div>
 
                 ${detailsHTML}
@@ -365,73 +379,6 @@ app.get('/customer', (req, res) => {
                     fetch('/customer-action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'sendCustom', psid, message }) })
                     .then(res => res.text()).then(data => { alert(data); inputElem.value = ''; });
                 }
-                async function sendOriginalImagesViaGitHub(psid) {
-                    let fileInput = document.getElementById('imageFiles_' + psid);
-                    if (fileInput.files.length === 0) { alert("กรุณาเลือกไฟล์รูปภาพอย่างน้อย 1 รูปครับ"); return; }
-                    alert("กำลังอัปโหลดและส่งรูปภาพต้นฉบับ " + fileInput.files.length + " รูป กรุณารอสักครู่...");
-                    for (let file of fileInput.files) {
-                        await new Promise((resolve) => {
-                            let reader = new FileReader();
-                            reader.onload = function(e) {
-                                let base64Data = e.target.result.split(',')[1];
-                                fetch('/customer-action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'uploadAndSendImage', psid, filename: file.name, fileData: base64Data }) })
-                                .then(res => res.text()).then(() => { setTimeout(resolve, 800); }).catch(() => resolve());
-                            };
-                            reader.readAsDataURL(file);
-                        });
-                    }
-                    alert("ส่งรูปภาพต้นฉบับทั้งหมดสำเร็จเรียบร้อย!");
-                    fileInput.value = '';
-                }
-                async function processAndSendZeroPrice(psid) {
-                    let fileInput = document.getElementById('imageFiles_' + psid);
-                    if (fileInput.files.length === 0) { alert("กรุณาเลือกไฟล์รูปภาพอย่างน้อย 1 รูปครับ"); return; }
-                    alert("กำลังแก้ไขราคาเป็น 0 บาท และส่งภาพ " + fileInput.files.length + " รูป กรุณารอสักครู่...");
-                    for (let file of fileInput.files) {
-                        await new Promise((resolve) => {
-                            const reader = new FileReader();
-                            reader.onload = function(e) {
-                                const img = new Image();
-                                img.onload = function() {
-                                    const canvas = document.createElement('canvas');
-                                    const ctx = canvas.getContext('2d');
-                                    canvas.width = img.width; canvas.height = img.height;
-                                    ctx.drawImage(img, 0, 0);
-                                    const sampleX = Math.round(img.width * 0.85); const sampleY = Math.round(img.height * 0.52);
-                                    const pixel = ctx.getImageData(sampleX, sampleY, 1, 1).data;
-                                    const bgColor = \`rgb(\${pixel[0]}, \${pixel[1]}, \${pixel[2]})\`;
-                                    const searchStartX = Math.round(img.width * 0.045); const searchWidth = Math.round(img.width * 0.25);
-                                    const startY = Math.round(img.height * 0.48); const endY = Math.round(img.height * 0.55);
-                                    let seatLabelY = -1;
-                                    const imgData = ctx.getImageData(0, 0, img.width, img.height).data;
-                                    for (let y = startY; y <= endY; y++) {
-                                        for (let x = searchStartX; x <= searchStartX + searchWidth; x++) {
-                                            const idx = (y * img.width + x) * 4;
-                                            if (imgData[idx] > 160 && imgData[idx + 1] > 160 && imgData[idx + 2] > 160) { seatLabelY = y; break; }
-                                        }
-                                        if (seatLabelY !== -1) break;
-                                    }
-                                    let targetY = (seatLabelY !== -1) ? seatLabelY - (img.height * 0.035) : Math.round(img.height * 0.465);
-                                    const rectX = img.width * 0.045; const rectWidth = img.width * 0.32; const rectHeight = img.height * 0.030;
-                                    ctx.fillStyle = bgColor; ctx.fillRect(rectX, targetY, rectWidth, rectHeight);
-                                    const fontSize = Math.round(img.height * 0.0135);
-                                    ctx.font = \`bold \${fontSize}px 'Sukhumvit Set', 'Segoe UI', Tahoma, sans-serif\`;
-                                    ctx.fillStyle = '#E5A93C'; ctx.textBaseline = 'top';
-                                    ctx.fillText('0 บาท', rectX, targetY + (img.height * 0.005));
-                                    let cleanedDataUrl = canvas.toDataURL('image/png');
-                                    let base64Data = cleanedDataUrl.split(',')[1];
-                                    let fileNamePng = file.name.replace(/\\.[^/.]+$/, "") + ".png";
-                                    fetch('/customer-action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'uploadAndSendImage', psid, filename: fileNamePng, fileData: base64Data }) })
-                                    .then(res => res.text()).then(() => { setTimeout(resolve, 800); }).catch(() => resolve());
-                                };
-                                img.src = e.target.result;
-                            };
-                            reader.readAsDataURL(file);
-                        });
-                    }
-                    alert("แก้ไขราคาเป็น 0 บาท และส่งรูปภาพทั้งหมดสำเร็จเรียบร้อย!");
-                    fileInput.value = '';
-                }
             </script>
         </body>
         </html>
@@ -442,7 +389,6 @@ function sortItemsByTime(itemsArray) {
     return itemsArray.sort((a, b) => a.time.localeCompare(b.time));
 }
 
-// ฟังก์ชันค้นหา PSID จากชื่อเล่นที่แอดมินพิมพ์มา (รองรับการสะกดใกล้เคียง พี/พี่)
 function findPsidByNameQuery(nameQuery) {
     if (!nameQuery) return null;
     let q = nameQuery.trim().toLowerCase();
@@ -461,7 +407,7 @@ function findPsidByNameQuery(nameQuery) {
 
 // 6. API จัดการข้อมูลและส่งข้อความ
 app.post('/customer-action', express.json({ limit: '20mb' }), async (req, res) => {
-    let { action, psid, date, index, amount, type, name, message, filename, fileData, time } = req.body;
+    let { action, psid, date, index, amount, type, name, message, time } = req.body;
     let today = getThaiDate();
     if (!db[psid]) db[psid] = {};
     let timeNow = getThaiTime();
@@ -472,7 +418,11 @@ app.post('/customer-action', express.json({ limit: '20mb' }), async (req, res) =
         return res.send("บันทึกชื่อเล่นสำเร็จ!");
     } else if (action === 'sendCustom') {
         if (!message) return res.status(400).send("ไม่มีข้อความที่ต้องการส่ง");
-        await sendMessengerMessage(psid, message);
+        if (psid.startsWith('U')) {
+            await sendLineMessage(psid, message);
+        } else {
+            await sendMessengerMessage(psid, message);
+        }
         return res.send("ส่งข้อความหาลูกค้าเรียบร้อยแล้ว");
     } else if (action === 'getDailyReportText') {
         let customerData = db[psid];
@@ -484,22 +434,6 @@ app.post('/customer-action', express.json({ limit: '20mb' }), async (req, res) =
         
         let reportMessage = `📅 [${date}] รายการประจำวัน:\n${listText || 'ไม่มีรายการ'}\n-------------------\n💰 ยอดรวมของวัน: ${dayTotal} บาท`;
         return res.json({ text: reportMessage });
-    } else if (action === 'uploadAndSendImage') {
-        if (!fileData || !filename) return res.status(400).send("ไม่พบข้อมูลไฟล์รูปภาพ");
-        try {
-            let uniqueName = `uploads/${Date.now()}_${filename.replace(/[^a-zA-Z0-9_.-]/g, '_')}`;
-            await axios.put(`https://api.github.com/repos/${GITHUB_REPO}/contents/${uniqueName}`, {
-                message: 'Upload image via admin panel',
-                content: fileData
-            }, { headers: { Authorization: `token ${GITHUB_TOKEN}` } });
-
-            let publicImageUrl = `https://raw.githubusercontent.com/${GITHUB_REPO}/main/${uniqueName}`;
-            await sendMessengerImage(psid, publicImageUrl);
-            return res.send("อัปโหลดและส่งรูปสำเร็จ");
-        } catch (err) {
-            console.error("❌ อัปโหลดรูปขึ้น GitHub ไม่สำเร็จ:", err.response?.data || err.message);
-            return res.status(500).send("อัปโหลดรูปไม่สำเร็จ");
-        }
     } else if (action === 'add') {
         if (!db[psid][today]) db[psid][today] = [];
         db[psid][today].push({ time: timeNow, amount: amount });
@@ -510,14 +444,12 @@ app.post('/customer-action', express.json({ limit: '20mb' }), async (req, res) =
         let listText = db[psid][today].map((item, idx) => `${idx + 1}. [${item.time}] +${item.amount}`).join('\n');
         let reportMsg = `📅 [${today}] รายการประจำวัน:\n${listText}\n-------------------\n💰 ยอดรวมของวัน: ${total} บาท`;
         
-        await sendMessengerMessage(psid, reportMsg);
+        if (psid.startsWith('U')) {
+            await sendLineMessage(psid, reportMsg);
+        } else {
+            await sendMessengerMessage(psid, reportMsg);
+        }
         return res.send("เพิ่มยอดและส่งข้อความหาลูกค้าสำเร็จ!");
-    } else if (action === 'customAdd') {
-        if (!db[psid][today]) db[psid][today] = [];
-        db[psid][today].push({ time: time, amount: amount });
-        sortItemsByTime(db[psid][today]);
-        await saveToGitHub();
-        return res.send("บันทึกตกแต่งยอดเรียบร้อย");
     } else if (action === 'edit') {
         if (db[psid][date] && db[psid][date][index]) {
             db[psid][date][index].amount = amount;
@@ -565,14 +497,18 @@ app.post('/customer-action', express.json({ limit: '20mb' }), async (req, res) =
             fullText += `\n-------------------\n💰 ยอดสะสมรวมทั้งหมด: ${grandTotal} บาท`;
             reportMessage = fullText;
         }
-        await sendMessengerMessage(psid, reportMessage);
-        return res.send("ส่งรายงานสรุปยอดไปหาลูกค้าทาง Messenger สำเร็จ!");
+        if (psid.startsWith('U')) {
+            await sendLineMessage(psid, reportMessage);
+        } else {
+            await sendMessengerMessage(psid, reportMessage);
+        }
+        return res.send("ส่งรายงานสรุปยอดไปหาลูกค้าสำเร็จ!");
     } else { 
         return res.status(400).send("Action ไม่ถูกต้อง"); 
     }
 });
 
-// 7. Webhook รับข้อความและรูปภาพจาก Messenger (พร้อมส่งต่อเข้า Telegram)
+// 7. Webhook รับข้อความและรูปภาพจาก Messenger
 app.post('/webhook', async (req, res) => {
     let body = req.body;
     if (body.object === 'page') {
@@ -584,13 +520,12 @@ app.post('/webhook', async (req, res) => {
 
             if (webhook_event.message) {
                 let msg = webhook_event.message;
-                let custName = db[senderPSID]?.name || `PSID: ${senderPSID}`;
+                let custName = db[senderPSID]?.name || `ID: ${senderPSID}`;
 
-                // 1. ข้อความตัวหนังสือ
                 if (msg.text) {
                     let incomingText = msg.text.trim();
                     recentCustomers[senderPSID] = { lastMessage: incomingText, time: getThaiTime() };
-                    await sendTelegramMessage(`💬 <b>ข้อความใหม่จาก [${custName}]:</b>\n${incomingText}`);
+                    await sendTelegramMessage(`💬 <b>[FB] ข้อความใหม่จาก [${custName}]:</b>\n${incomingText}`);
 
                     let today = getThaiDate();
                     if (!db[senderPSID]) db[senderPSID] = {};
@@ -612,13 +547,12 @@ app.post('/webhook', async (req, res) => {
                     }
                 }
 
-                // 2. รูปภาพ/สลิป
                 if (msg.attachments && msg.attachments.length > 0) {
                     for (let attachment of msg.attachments) {
                         if (attachment.type === 'image') {
                             let imageUrl = attachment.payload.url;
                             recentCustomers[senderPSID] = { lastMessage: '🖼 [ส่งรูปภาพ/สลิป]', time: getThaiTime() };
-                            await sendTelegramPhoto(imageUrl, `🖼 <b>ลูกค้า [${custName}] ส่งรูปภาพ/สลิปมาใหม่:</b>`);
+                            await sendTelegramPhoto(imageUrl, `🖼 <b>[FB] ลูกค้า [${custName}] ส่งรูปภาพ/สลิปมาใหม่:</b>`);
                         }
                     }
                 }
@@ -630,7 +564,75 @@ app.post('/webhook', async (req, res) => {
     }
 });
 
-// --- ตัวแปรล็อกเป้าหมายเฉพาะแอดมิน (Admin Active Target Lock) ---
+// 7.2 Webhook รับข้อความและรูปภาพจาก LINE OA (/line-webhook)
+app.post('/line-webhook', async (req, res) => {
+    let body = req.body;
+    if (body.events) {
+        for (let event of body.events) {
+            if (event.type === 'message' && event.source && event.source.userId) {
+                let userId = event.source.userId;
+                let custName = db[userId]?.name || `LINE ID: ${userId.substring(0, 8)}`;
+
+                // ข้อความตัวหนังสือ
+                if (event.message.type === 'text') {
+                    let incomingText = event.message.text.trim();
+                    recentCustomers[userId] = { lastMessage: incomingText, time: getThaiTime() };
+                    await sendTelegramMessage(`💬 <b>[LINE] ข้อความใหม่จาก [${custName}]:</b>\n${incomingText}`);
+
+                    let today = getThaiDate();
+                    if (!db[userId]) db[userId] = {};
+                    if (!db[userId][today]) db[userId][today] = [];
+
+                    if (incomingText.startsWith('.')) {
+                        let amount = parseFloat(incomingText.replace(/^\.+/, ''));
+                        if (!isNaN(amount)) {
+                            let timeNow = getThaiTime();
+                            db[userId][today].push({ time: timeNow, amount: amount });
+                            sortItemsByTime(db[userId][today]);
+                            await saveToGitHub();
+                            let total = db[userId][today].reduce((sum, item) => sum + item.amount, 0);
+                            let listText = db[userId][today].map((item, idx) => `${idx + 1}. [${item.time}] +${item.amount}`).join('\n');
+                            
+                            let replyMessage = `📅 [${today}] รายการประจำวัน:\n${listText}\n-------------------\n💰 ยอดรวมของวัน: ${total} บาท`;
+                            await sendLineMessage(userId, replyMessage);
+                        }
+                    }
+                }
+
+                // รูปภาพ/สลิปจาก LINE
+                if (event.message.type === 'image') {
+                    let messageId = event.message.id;
+                    recentCustomers[userId] = { lastMessage: '🖼 [LINE ส่งรูปภาพ/สลิป]', time: getThaiTime() };
+                    
+                    try {
+                        // ดึงรูปภาพจาก LINE API
+                        let imgRes = await axios.get(`https://api-data.line.me/v2/bot/message/${messageId}/content`, {
+                            headers: { 'Authorization': `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}` },
+                            responseType: 'arraybuffer'
+                        });
+                        let base64Image = Buffer.from(imgRes.data).toString('base64');
+                        let uniqueName = `uploads/line_${Date.now()}_${Math.random().toString(36).substring(2, 8)}.jpg`;
+
+                        // อัปโหลดรูปขึ้น GitHub เพื่อเอาลิงก์ public ไปส่ง Telegram
+                        await axios.put(`https://api.github.com/repos/${GITHUB_REPO}/contents/${uniqueName}`, {
+                            message: 'Upload image from LINE bot',
+                            content: base64Image
+                        }, { headers: { Authorization: `token ${GITHUB_TOKEN}` } });
+
+                        let publicImageUrl = `https://raw.githubusercontent.com/${GITHUB_REPO}/main/${uniqueName}`;
+                        await sendTelegramPhoto(publicImageUrl, `🖼 <b>[LINE] ลูกค้า [${custName}] ส่งรูปภาพ/สลิปมาใหม่:</b>`);
+                    } catch (err) {
+                        console.error("❌ ดึงรูปจาก LINE ไม่สำเร็จ:", err.response?.data || err.message);
+                        await sendTelegramMessage(`🖼 <b>[LINE] ลูกค้า [${custName}] ส่งรูปภาพมา (ไม่สามารถดึงรูปแสดงได้)</b>`);
+                    }
+                }
+            }
+        }
+    }
+    res.status(200).send('OK');
+});
+
+// 8. Webhook สำหรับรับคำสั่งจาก Telegram
 let lockedAdminTargetPsid = null;
 let lockExpireTimer = null;
 
@@ -642,7 +644,6 @@ function setAdminLock(psid) {
     }, 30000);
 }
 
-// 8. Webhook สำหรับรับคำสั่งจาก Telegram
 app.post('/telegram-webhook', express.json(), async (req, res) => {
     let update = req.body;
     if (update.message && update.message.chat) {
@@ -651,125 +652,75 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
         if (TELEGRAM_CHAT_ID && chatId === String(TELEGRAM_CHAT_ID)) {
             let messageObj = update.message;
             let text = messageObj.text || messageObj.caption || "";
-            let photoArray = messageObj.photo;
 
-            let targetPsid = null;
+            let targetId = null;
             let actualText = text;
 
             if (text) {
                 let parts = text.trim().split(/\s+/);
                 let found = findPsidByNameQuery(parts[0]);
                 if (found) {
-                    targetPsid = found;
+                    targetId = found;
                     actualText = parts.slice(1).join(" "); 
-                    setAdminLock(targetPsid); 
+                    setAdminLock(targetId); 
                 }
             }
 
-            if (!targetPsid && lockedAdminTargetPsid) {
-                targetPsid = lockedAdminTargetPsid;
-                setAdminLock(targetPsid); 
+            if (!targetId && lockedAdminTargetPsid) {
+                targetId = lockedAdminTargetPsid;
+                setAdminLock(targetId); 
             }
 
-            if (!targetPsid) {
+            if (!targetId) {
                 let recentKeys = Object.keys(recentCustomers);
-                targetPsid = recentKeys.length > 0 ? recentKeys[recentKeys.length - 1] : null;
+                targetId = recentKeys.length > 0 ? recentKeys[recentKeys.length - 1] : null;
             }
 
-            if (!targetPsid) {
-                let allPsids = Object.keys(db);
-                if (allPsids.length > 0) {
-                    targetPsid = allPsids[allPsids.length - 1];
+            if (!targetId) {
+                let allIds = Object.keys(db);
+                if (allIds.length > 0) {
+                    targetId = allIds[allIds.length - 1];
                 }
             }
 
-            const lockedTargetPsid = targetPsid;
-            if (lockedTargetPsid) {
-                setAdminLock(lockedTargetPsid); 
+            const lockedTargetId = targetId;
+            if (lockedTargetId) {
+                setAdminLock(lockedTargetId); 
             }
 
-            // 1. จัดการรูปภาพ
-            if (photoArray && photoArray.length > 0) {
-                let largestPhoto = photoArray[photoArray.length - 1];
-                let fileId = largestPhoto.file_id;
-
-                try {
-                    let fileRes = await axios.get(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getFile?file_id=${fileId}`);
-                    let filePath = fileRes.data.result.file_path;
-                    let telegramPhotoUrl = `https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${filePath}`;
-
-                    if (lockedTargetPsid) {
-                        let custName = db[lockedTargetPsid]?.name || lockedTargetPsid;
-                        
-                        let imageResponse = await axios.get(telegramPhotoUrl, { responseType: 'arraybuffer' });
-                        let base64Image = Buffer.from(imageResponse.data).toString('base64');
-                        
-                        let uniqueName = `uploads/tg_${Date.now()}_${Math.random().toString(36).substring(2, 8)}.jpg`;
-
-                        await axios.put(`https://api.github.com/repos/${GITHUB_REPO}/contents/${uniqueName}`, {
-                            message: 'Upload image bundle from Telegram bot',
-                            content: base64Image
-                        }, { headers: { Authorization: `token ${GITHUB_TOKEN}` } });
-
-                        let publicImageUrl = `https://raw.githubusercontent.com/${GITHUB_REPO}/main/${uniqueName}`;
-
-                        await sendMessengerImage(lockedTargetPsid, publicImageUrl);
-                        await sendTelegramMessage(`🖼 ส่งรูปภาพไปยังแชท <b>${custName}</b> สำเร็จ!`);
-
-                    } else {
-                        await sendTelegramMessage(`❌ ไม่พบเป้าหมายลูกค้าในระบบที่จะส่งรูปไป`);
-                    }
-                } catch (imgErr) {
-                    console.error("❌ ส่งรูปจาก Telegram ไป FB ไม่สำเร็จ:", imgErr.response?.data || imgErr.message);
-                    await sendTelegramMessage(`❌ ส่งรูปภาพไม่สำเร็จ: ${imgErr.message}`);
-                }
-            }
-
-            // 2. จัดการข้อความหรือคำสั่งตัวหนังสือ
             if (actualText) {
                 let today = getThaiDate();
-                if (lockedTargetPsid) {
-                    let custName = db[lockedTargetPsid]?.name || lockedTargetPsid;
+                if (lockedTargetId) {
+                    let custName = db[lockedTargetId]?.name || lockedTargetId;
 
                     if (actualText.startsWith('.')) {
                         let amount = parseFloat(actualText.replace(/^\.+/, ''));
                         if (!isNaN(amount)) {
-                            if (!db[lockedTargetPsid]) db[lockedTargetPsid] = {};
-                            if (!db[lockedTargetPsid][today]) db[lockedTargetPsid][today] = [];
+                            if (!db[lockedTargetId]) db[lockedTargetId] = {};
+                            if (!db[lockedTargetId][today]) db[lockedTargetId][today] = [];
                             let timeNow = getThaiTime();
 
-                            db[lockedTargetPsid][today].push({ time: timeNow, amount: amount });
-                            sortItemsByTime(db[lockedTargetPsid][today]);
+                            db[lockedTargetId][today].push({ time: timeNow, amount: amount });
+                            sortItemsByTime(db[lockedTargetId][today]);
                             await saveToGitHub();
 
-                            let total = db[lockedTargetPsid][today].reduce((sum, item) => sum + item.amount, 0);
-                            let listText = db[lockedTargetPsid][today].map((item, idx) => `${idx + 1}. [${item.time}] +${item.amount}`).join('\n');
+                            let total = db[lockedTargetId][today].reduce((sum, item) => sum + item.amount, 0);
+                            let listText = db[lockedTargetId][today].map((item, idx) => `${idx + 1}. [${item.time}] +${item.amount}`).join('\n');
                             let reportMsg = `📅 [${today}] รายการประจำวัน:\n${listText}\n-------------------\n💰 ยอดรวมของวัน: ${total} บาท`;
                             
-                            await sendMessengerMessage(lockedTargetPsid, reportMsg);
+                            if (lockedTargetId.startsWith('U')) {
+                                await sendLineMessage(lockedTargetId, reportMsg);
+                            } else {
+                                await sendMessengerMessage(lockedTargetId, reportMsg);
+                            }
                             await sendTelegramMessage(`✅ บันทึกยอด +${amount} ให้ <b>${custName}</b> และส่งยอดให้ลูกค้าแล้ว! (ยอดวันนี้: ${total} บาท)`);
                         }
-                    } else if (actualText.includes(" ")) {
-                        let timeCandidate = actualText.split(" ")[0];
-                        let amountCandidate = parseFloat(actualText.split(" ")[1]);
-
-                        if ((timeCandidate.includes(":") || timeCandidate.includes(".")) && !isNaN(amountCandidate)) {
-                            let formattedTime = timeCandidate.replace('.', ':');
-                            if (!db[lockedTargetPsid]) db[lockedTargetPsid] = {};
-                            if (!db[lockedTargetPsid][today]) db[lockedTargetPsid][today] = [];
-
-                            db[lockedTargetPsid][today].push({ time: formattedTime, amount: amountCandidate });
-                            sortItemsByTime(db[lockedTargetPsid][today]);
-                            await saveToGitHub();
-
-                            let total = db[lockedTargetPsid][today].reduce((sum, item) => sum + item.amount, 0);
-                            await sendTelegramMessage(`✨ บันทึกตกแต่งยอด [${formattedTime}] +${amountCandidate} ให้ <b>${custName}</b> สำเร็จ! (ยอดวันนี้: ${total} บาท)`);
-                        } else {
-                            await sendMessengerMessage(lockedTargetPsid, actualText);
-                            await sendTelegramMessage(`📤 ส่งข้อความหา <b>${custName}</b> เรียบร้อย:\n"${actualText}"`);
-                        }
                     } else {
-                        await sendMessengerMessage(lockedTargetPsid, actualText);
+                        if (lockedTargetId.startsWith('U')) {
+                            await sendLineMessage(lockedTargetId, actualText);
+                        } else {
+                            await sendMessengerMessage(lockedTargetId, actualText);
+                        }
                         await sendTelegramMessage(`📤 ส่งข้อความหา <b>${custName}</b> เรียบร้อย:\n"${actualText}"`);
                     }
                 } else {
@@ -785,7 +736,7 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
 app.get('/admin-test', async (req, res) => {
     let psid = req.query.id;
     let text = req.query.text;
-    if (!psid || !text) return res.send("❌ กรุณาระบุ ?id=PSID&text=ข้อความ");
+    if (!psid || !text) return res.send("❌ กรุณาระบุ ?id=ID&text=ข้อความ");
 
     let today = getThaiDate();
     if (!db[psid]) db[psid] = {};
@@ -806,8 +757,12 @@ app.get('/admin-test', async (req, res) => {
         replyMessage = `⚙ แอดมิน: ${text}`;
     }
 
-    await sendMessengerMessage(psid, replyMessage);
-    res.send(`✅ ดำเนินการให้ PSID: ${psid} เรียบร้อย!`);
+    if (psid.startsWith('U')) {
+        await sendLineMessage(psid, replyMessage);
+    } else {
+        await sendMessengerMessage(psid, replyMessage);
+    }
+    res.send(`✅ ดำเนินการให้ ID: ${psid} เรียบร้อย!`);
 });
 
 const PORT = process.env.PORT || 10000;
