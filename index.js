@@ -587,8 +587,19 @@ app.post('/webhook', async (req, res) => {
     }
 });
 
-// --- ตัวแปรเก็บ Session กลุ่มรูปภาพ ---
-let mediaGroupSessions = {}; 
+// --- ตัวแปรล็อกเป้าหมายเฉพาะแอดมิน (Admin Active Target Lock) ---
+let lockedAdminTargetPsid = null;
+let lockExpireTimer = null;
+
+// ฟังก์ชันสำหรับตั้งค่าล็อกเป้าหมาย (จำไว้ 30 วินาที ทุกครั้งที่มีการส่งรูปหรือคำสั่ง)
+function setAdminLock(psid) {
+    lockedAdminTargetPsid = psid;
+    if (lockExpireTimer) clearTimeout(lockExpireTimer);
+    // ถ้าไม่มีการส่งรูปหรือข้อความเพิ่มภายใน 30 วินาที จะปลดล็อกอัตโนมัติ
+    lockExpireTimer = setTimeout(() => {
+        lockedAdminTargetPsid = null;
+    }, 30000);
+}
 
 // 8. Webhook สำหรับรับคำสั่งจาก Telegram (แอดมินพิมพ์คุยโต้ตอบและสั่งงาน)
 app.post('/telegram-webhook', express.json(), async (req, res) => {
@@ -600,37 +611,41 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
             let messageObj = update.message;
             let text = messageObj.text || messageObj.caption || "";
             let photoArray = messageObj.photo;
-            let mediaGroupId = messageObj.media_group_id; // รหัสกลุ่มอัลบั้ม
+            let mediaGroupId = messageObj.media_group_id;
 
             let targetPsid = null;
             let actualText = text;
 
-            // 1. ถ้ามี mediaGroupId และเคยถูกบันทึกไว้ ให้ใช้ PSID เดิมทันที
-            if (mediaGroupId && mediaGroupSessions[mediaGroupId]) {
-                targetPsid = mediaGroupSessions[mediaGroupId].psid;
-            }
-
-            // 2. ถ้ายังไม่มี ให้ลองเช็คจากชื่อที่แอดมินพิมพ์กำกับมา (เช่น "พี่บอย")
-            if (!targetPsid && text) {
+            // 1. ลำดับที่ 1: เช็คจากชื่อที่แอดมินพิมพ์กำกับมา (เช่น "พี่บอย") ถ้าเจอให้ล็อกทันที
+            if (text) {
                 let parts = text.trim().split(/\s+/);
                 let found = findPsidByNameQuery(parts[0]);
                 if (found) {
                     targetPsid = found;
-                    actualText = parts.slice(1).join(" "); // ตัดชื่อออกเหลือแต่ข้อความจริง
-
-                    if (mediaGroupId && photoArray && photoArray.length > 0) {
-                        mediaGroupSessions[mediaGroupId] = { psid: targetPsid };
-                    }
+                    actualText = parts.slice(1).join(" "); 
+                    setAdminLock(targetPsid); // ล็อกเป้าหมายนี้ไว้ทันที
                 }
             }
 
-            // 3. ถ้ายังไม่เจอ ให้ดึงจากลูกค้ารายล่าสุด
+            // 2. ลำดับที่ 2: ถ้าไม่ได้พิมพ์ชื่อ แต่กำลังส่งรูปต่อเนื่อง (อยู่ในช่วงล็อก 30 วินาที) ให้ใช้เป้าหมายเดิม
+            if (!targetPsid && lockedAdminTargetPsid) {
+                targetPsid = lockedAdminTargetPsid;
+                setAdminLock(targetPsid); // ต่ออายุเวลาล็อกออกไปอีก 30 วินาทีทุกครั้งที่ส่งรูปเพิ่ม
+            }
+
+            // 3. ลำดับที่ 3: ถ้าไม่มีการล็อก ให้เช็คจากกลุ่มรูป (Media Group) เดิม
+            if (!targetPsid && mediaGroupId && mediaGroupSessions[mediaGroupId]) {
+                targetPsid = mediaGroupSessions[mediaGroupId].psid;
+                setAdminLock(targetPsid);
+            }
+
+            // 4. ลำดับที่ 4: ดึงจากลูกค้ารายล่าสุด (Recent Customers)
             if (!targetPsid) {
                 let recentKeys = Object.keys(recentCustomers);
                 targetPsid = recentKeys.length > 0 ? recentKeys[recentKeys.length - 1] : null;
             }
 
-            // 4. ถ้ายังว่างอีก ดึงจากฐานข้อมูลตัวสุดท้าย
+            // 5. ลำดับที่ 5: ดึงจากฐานข้อมูลตัวสุดท้าย
             if (!targetPsid) {
                 let allPsids = Object.keys(db);
                 if (allPsids.length > 0) {
@@ -639,6 +654,9 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
             }
 
             const lockedTargetPsid = targetPsid;
+            if (lockedTargetPsid) {
+                setAdminLock(lockedTargetPsid); // ยืนยันการล็อกเป้าหมาย
+            }
 
             if (mediaGroupId && lockedTargetPsid && !mediaGroupSessions[mediaGroupId]) {
                 mediaGroupSessions[mediaGroupId] = { psid: lockedTargetPsid };
@@ -672,7 +690,6 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
                         await sendMessengerImage(lockedTargetPsid, publicImageUrl);
                         await sendTelegramMessage(`🖼 ส่งรูปภาพไปยังแชท <b>${custName}</b> สำเร็จ!`);
 
-                        // 🧹 **ล้าง Session ทันทีหลังจากส่งรูปภาพนี้เสร็จเรียบร้อย**
                         if (mediaGroupId && mediaGroupSessions[mediaGroupId]) {
                             delete mediaGroupSessions[mediaGroupId];
                         }
