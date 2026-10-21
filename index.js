@@ -595,7 +595,6 @@ let lockExpireTimer = null;
 function setAdminLock(psid) {
     lockedAdminTargetPsid = psid;
     if (lockExpireTimer) clearTimeout(lockExpireTimer);
-    // ถ้าไม่มีการส่งรูปหรือข้อความเพิ่มภายใน 30 วินาที จะปลดล็อกอัตโนมัติ
     lockExpireTimer = setTimeout(() => {
         lockedAdminTargetPsid = null;
     }, 30000);
@@ -623,29 +622,23 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
                 if (found) {
                     targetPsid = found;
                     actualText = parts.slice(1).join(" "); 
-                    setAdminLock(targetPsid); // ล็อกเป้าหมายนี้ไว้ทันที
+                    setAdminLock(targetPsid); 
                 }
             }
 
-            // 2. ลำดับที่ 2: ถ้าไม่ได้พิมพ์ชื่อ แต่กำลังส่งรูปต่อเนื่อง (อยู่ในช่วงล็อก 30 วินาที) ให้ใช้เป้าหมายเดิม
+            // 2. ลำดับที่ 2: ถ้าไม่มีการพิมพ์ชื่อ แต่กำลังอยู่ในช่วงล็อก 30 วิ ให้ใช้เป้าหมายเดิมต่อเนื่อง
             if (!targetPsid && lockedAdminTargetPsid) {
                 targetPsid = lockedAdminTargetPsid;
-                setAdminLock(targetPsid); // ต่ออายุเวลาล็อกออกไปอีก 30 วินาทีทุกครั้งที่ส่งรูปเพิ่ม
+                setAdminLock(targetPsid); 
             }
 
-            // 3. ลำดับที่ 3: ถ้าไม่มีการล็อก ให้เช็คจากกลุ่มรูป (Media Group) เดิม
-            if (!targetPsid && mediaGroupId && mediaGroupSessions[mediaGroupId]) {
-                targetPsid = mediaGroupSessions[mediaGroupId].psid;
-                setAdminLock(targetPsid);
-            }
-
-            // 4. ลำดับที่ 4: ดึงจากลูกค้ารายล่าสุด (Recent Customers)
+            // 3. ลำดับที่ 3: ดึงจากลูกค้ารายล่าสุด (Recent Customers)
             if (!targetPsid) {
                 let recentKeys = Object.keys(recentCustomers);
                 targetPsid = recentKeys.length > 0 ? recentKeys[recentKeys.length - 1] : null;
             }
 
-            // 5. ลำดับที่ 5: ดึงจากฐานข้อมูลตัวสุดท้าย
+            // 4. ลำดับที่ 4: ดึงจากฐานข้อมูลตัวสุดท้าย
             if (!targetPsid) {
                 let allPsids = Object.keys(db);
                 if (allPsids.length > 0) {
@@ -655,11 +648,7 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
 
             const lockedTargetPsid = targetPsid;
             if (lockedTargetPsid) {
-                setAdminLock(lockedTargetPsid); // ยืนยันการล็อกเป้าหมาย
-            }
-
-            if (mediaGroupId && lockedTargetPsid && !mediaGroupSessions[mediaGroupId]) {
-                mediaGroupSessions[mediaGroupId] = { psid: lockedTargetPsid };
+                setAdminLock(lockedTargetPsid); 
             }
 
             // 1. จัดการรูปภาพ
@@ -690,20 +679,12 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
                         await sendMessengerImage(lockedTargetPsid, publicImageUrl);
                         await sendTelegramMessage(`🖼 ส่งรูปภาพไปยังแชท <b>${custName}</b> สำเร็จ!`);
 
-                        if (mediaGroupId && mediaGroupSessions[mediaGroupId]) {
-                            delete mediaGroupSessions[mediaGroupId];
-                        }
-
                     } else {
                         await sendTelegramMessage(`❌ ไม่พบเป้าหมายลูกค้าในระบบที่จะส่งรูปไป`);
                     }
                 } catch (imgErr) {
                     console.error("❌ ส่งรูปจาก Telegram ไป FB ไม่สำเร็จ:", imgErr.response?.data || imgErr.message);
                     await sendTelegramMessage(`❌ ส่งรูปภาพไม่สำเร็จ: ${imgErr.message}`);
-                    
-                    if (mediaGroupId && mediaGroupSessions[mediaGroupId]) {
-                        delete mediaGroupSessions[mediaGroupId];
-                    }
                 }
             }
 
