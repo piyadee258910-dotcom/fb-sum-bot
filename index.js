@@ -10,17 +10,13 @@ const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN || "your_page_access_tok
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN; 
 const GITHUB_REPO = process.env.GITHUB_REPO || "piyadee258910-dotcom/fb-sum-bot"; 
 
-// LINE OA Config จาก Environment Variables บน Render
 const LINE_CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN;
-
-// Telegram Config จาก Environment Variables บน Render
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
 let db = {};
 let recentCustomers = {};
 
-// ฟังก์ชันดึงเวลาปัจจุบันของประเทศไทย (HH:MM)
 function getThaiTime() {
     return new Date().toLocaleTimeString('en-GB', { 
         timeZone: 'Asia/Bangkok', 
@@ -30,7 +26,6 @@ function getThaiTime() {
     });
 }
 
-// ฟังก์ชันดึงวันที่ปัจจุบันของประเทศไทย (YYYY-MM-DD)
 function getThaiDate() {
     let formatter = new Intl.DateTimeFormat('en-CA', {
         timeZone: 'Asia/Bangkok',
@@ -41,7 +36,6 @@ function getThaiDate() {
     return formatter.format(new Date());
 }
 
-// ฟังก์ชันส่งข้อความแจ้งเตือนไป Telegram
 async function sendTelegramMessage(text) {
     if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
     try {
@@ -63,7 +57,6 @@ async function sendTelegramMessage(text) {
     }
 }
 
-// ฟังก์ชันส่งรูปภาพแจ้งเตือนไป Telegram
 async function sendTelegramPhoto(photoUrl, caption) {
     if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
     try {
@@ -78,7 +71,6 @@ async function sendTelegramPhoto(photoUrl, caption) {
     }
 }
 
-// 1. ฟังก์ชันดึงข้อมูลจาก GitHub
 async function loadDataFromGitHub() {
     try {
         if (!GITHUB_TOKEN) return;
@@ -93,7 +85,6 @@ async function loadDataFromGitHub() {
     }
 }
 
-// 2. ฟังก์ชันบันทึกข้อมูล database.json ลง GitHub
 async function saveToGitHub() {
     if (!GITHUB_TOKEN) return;
     try {
@@ -121,7 +112,6 @@ async function saveToGitHub() {
 
 loadDataFromGitHub();
 
-// ฟังก์ชันส่งข้อความทาง Messenger
 async function sendMessengerMessage(recipientId, messageText) {
     try {
         if (!PAGE_ACCESS_TOKEN || PAGE_ACCESS_TOKEN === "your_page_access_token_here") return;
@@ -134,7 +124,6 @@ async function sendMessengerMessage(recipientId, messageText) {
     }
 }
 
-// ฟังก์ชันส่งรูปภาพทาง Messenger
 async function sendMessengerImage(recipientId, imageUrl) {
     try {
         if (!PAGE_ACCESS_TOKEN || PAGE_ACCESS_TOKEN === "your_page_access_token_here") return;
@@ -155,7 +144,6 @@ async function sendMessengerImage(recipientId, imageUrl) {
     }
 }
 
-// ฟังก์ชันส่งข้อความทาง LINE OA
 async function sendLineMessage(userId, messageText) {
     if (!LINE_CHANNEL_ACCESS_TOKEN) return;
     try {
@@ -173,12 +161,31 @@ async function sendLineMessage(userId, messageText) {
     }
 }
 
-// 3. หน้าแรก
+async function sendLineImage(userId, imageUrl) {
+    if (!LINE_CHANNEL_ACCESS_TOKEN) return;
+    try {
+        await axios.post('https://api.line.me/v2/bot/message/push', {
+            to: userId,
+            messages: [{
+                type: 'image',
+                originalContentUrl: imageUrl,
+                previewImageUrl: imageUrl
+            }]
+        }, {
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}`
+            }
+        });
+    } catch (error) {
+        console.error("❌ Error sending LINE image:", error.response?.data || error.message);
+    }
+}
+
 app.get('/', (req, res) => {
     res.send("Webhook server is running successfully! 🚀");
 });
 
-// 4. หน้าแอดมินด่วน (/admin)
 app.get('/admin', (req, res) => {
     let customerListHTML = '';
     for (let psid in recentCustomers) {
@@ -217,7 +224,6 @@ app.get('/admin', (req, res) => {
     `);
 });
 
-// 5. หน้าจัดการลูกค้า (/customer)
 app.get('/customer', (req, res) => {
     let htmlContent = '';
     for (let psid in db) {
@@ -405,7 +411,6 @@ function findPsidByNameQuery(nameQuery) {
     return null;
 }
 
-// 6. API จัดการข้อมูลและส่งข้อความ
 app.post('/customer-action', express.json({ limit: '20mb' }), async (req, res) => {
     let { action, psid, date, index, amount, type, name, message, time } = req.body;
     let today = getThaiDate();
@@ -508,7 +513,6 @@ app.post('/customer-action', express.json({ limit: '20mb' }), async (req, res) =
     }
 });
 
-// 7. Webhook รับข้อความและรูปภาพจาก Messenger
 app.post('/webhook', async (req, res) => {
     let body = req.body;
     if (body.object === 'page') {
@@ -564,7 +568,6 @@ app.post('/webhook', async (req, res) => {
     }
 });
 
-// 7.2 Webhook รับข้อความและรูปภาพจาก LINE OA (/line-webhook)
 app.post('/line-webhook', async (req, res) => {
     let body = req.body;
     if (body.events) {
@@ -573,7 +576,6 @@ app.post('/line-webhook', async (req, res) => {
                 let userId = event.source.userId;
                 let custName = db[userId]?.name || `LINE ID: ${userId.substring(0, 8)}`;
 
-                // ข้อความตัวหนังสือ
                 if (event.message.type === 'text') {
                     let incomingText = event.message.text.trim();
                     recentCustomers[userId] = { lastMessage: incomingText, time: getThaiTime() };
@@ -599,13 +601,11 @@ app.post('/line-webhook', async (req, res) => {
                     }
                 }
 
-                // รูปภาพ/สลิปจาก LINE
                 if (event.message.type === 'image') {
                     let messageId = event.message.id;
                     recentCustomers[userId] = { lastMessage: '🖼 [LINE ส่งรูปภาพ/สลิป]', time: getThaiTime() };
                     
                     try {
-                        // ดึงรูปภาพจาก LINE API
                         let imgRes = await axios.get(`https://api-data.line.me/v2/bot/message/${messageId}/content`, {
                             headers: { 'Authorization': `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}` },
                             responseType: 'arraybuffer'
@@ -613,7 +613,6 @@ app.post('/line-webhook', async (req, res) => {
                         let base64Image = Buffer.from(imgRes.data).toString('base64');
                         let uniqueName = `uploads/line_${Date.now()}_${Math.random().toString(36).substring(2, 8)}.jpg`;
 
-                        // อัปโหลดรูปขึ้น GitHub เพื่อเอาลิงก์ public ไปส่ง Telegram
                         await axios.put(`https://api.github.com/repos/${GITHUB_REPO}/contents/${uniqueName}`, {
                             message: 'Upload image from LINE bot',
                             content: base64Image
@@ -632,7 +631,6 @@ app.post('/line-webhook', async (req, res) => {
     res.status(200).send('OK');
 });
 
-// 8. Webhook สำหรับรับคำสั่งจาก Telegram
 let lockedAdminTargetPsid = null;
 let lockExpireTimer = null;
 
@@ -652,6 +650,7 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
         if (TELEGRAM_CHAT_ID && chatId === String(TELEGRAM_CHAT_ID)) {
             let messageObj = update.message;
             let text = messageObj.text || messageObj.caption || "";
+            let photo = messageObj.photo;
 
             let targetId = null;
             let actualText = text;
@@ -688,11 +687,31 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
                 setAdminLock(lockedTargetId); 
             }
 
-            if (actualText) {
-                let today = getThaiDate();
-                if (lockedTargetId) {
-                    let custName = db[lockedTargetId]?.name || lockedTargetId;
+            if (lockedTargetId) {
+                let custName = db[lockedTargetId]?.name || lockedTargetId;
 
+                // กรณีแอดมินส่งรูปภาพ/สลิปจาก Telegram ไปหาลูกค้า
+                if (photo && photo.length > 0) {
+                    let fileId = photo[photo.length - 1].file_id;
+                    try {
+                        let fileRes = await axios.get(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getFile?file_id=${fileId}`);
+                        let filePath = fileRes.data.result.file_path;
+                        let downloadUrl = `https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${filePath}`;
+
+                        if (lockedTargetId.startsWith('U')) {
+                            await sendLineImage(lockedTargetId, downloadUrl);
+                        } else {
+                            await sendMessengerImage(lockedTargetId, downloadUrl);
+                        }
+                        await sendTelegramMessage(`🖼 ส่งรูปภาพหา <b>${custName}</b> เรียบร้อยแล้ว!`);
+                    } catch (err) {
+                        console.error("❌ ส่งรูปจาก Telegram ไม่สำเร็จ:", err.message);
+                        await sendTelegramMessage(`❌ ส่งรูปภาพไม่สำเร็จ`);
+                    }
+                } 
+                // กรณีแอดมินส่งข้อความตัวหนังสือปกติหรือคำสั่งเพิ่มยอด
+                else if (actualText) {
+                    let today = getThaiDate();
                     if (actualText.startsWith('.')) {
                         let amount = parseFloat(actualText.replace(/^\.+/, ''));
                         if (!isNaN(amount)) {
@@ -723,16 +742,15 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
                         }
                         await sendTelegramMessage(`📤 ส่งข้อความหา <b>${custName}</b> เรียบร้อย:\n"${actualText}"`);
                     }
-                } else {
-                    await sendTelegramMessage(`❌ ไม่พบเป้าหมายลูกค้าในระบบ`);
                 }
+            } else {
+                await sendTelegramMessage(`❌ ไม่พบเป้าหมายลูกค้าในระบบ`);
             }
         }
     }
     res.status(200).send('OK');
 });
 
-// 9. ลิงก์ทดสอบด่วน /admin-test
 app.get('/admin-test', async (req, res) => {
     let psid = req.query.id;
     let text = req.query.text;
