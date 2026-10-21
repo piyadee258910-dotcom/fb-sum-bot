@@ -594,10 +594,11 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
         let chatId = String(update.message.chat.id);
         
         if (TELEGRAM_CHAT_ID && chatId === String(TELEGRAM_CHAT_ID)) {
-            let text = update.message.text || update.message.caption || "";
-            let photoArray = update.message.photo;
+            let messageObj = update.message;
+            let text = messageObj.text || messageObj.caption || "";
+            let photoArray = messageObj.photo;
 
-            // 🔒 ล็อกเป้าหมาย (Target PSID) ให้เสถียรทันทีเมื่อ Webhook ยิงเข้ามา
+            // 🔒 ล็อกเป้าหมายลูกค้าคนปัจจุบันทันที
             let recentKeys = Object.keys(recentCustomers);
             let targetPsid = recentKeys.length > 0 ? recentKeys[recentKeys.length - 1] : null;
             let actualText = text;
@@ -618,11 +619,11 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
                 }
             }
 
-            // บันทึกตัวแปรเฉพาะของ request นี้ไว้กันค่าเปลี่ยนระหว่างรัน async
             const lockedTargetPsid = targetPsid;
 
-            // 1. จัดการรูปภาพ
+            // 1. จัดการรูปภาพ (รองรับทั้งรูปเดี่ยว และรูปกลุ่มอัลบั้ม)
             if (photoArray && photoArray.length > 0) {
+                // Telegram จะส่งขนาดรูปมาหลายเรโซลูชั่น ตัวท้ายสุดคือรูปใหญ่สุดคมชัดสุด
                 let largestPhoto = photoArray[photoArray.length - 1];
                 let fileId = largestPhoto.file_id;
 
@@ -634,27 +635,26 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
                     if (lockedTargetPsid) {
                         let custName = db[lockedTargetPsid]?.name || lockedTargetPsid;
                         
-                        // ดาวน์โหลดรูปภาพมาเป็น buffer
+                        // ดาวน์โหลดภาพมาเป็น Buffer
                         let imageResponse = await axios.get(telegramPhotoUrl, { responseType: 'arraybuffer' });
                         let base64Image = Buffer.from(imageResponse.data).toString('base64');
                         
-                        // ตั้งชื่อไฟล์ชั่วคราวบน GitHub พร้อมสุ่มป้องกันชื่อซ้ำ
-                        let uniqueName = `uploads/tg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.jpg`;
+                        // ตั้งชื่อไฟล์ป้องกันชนกันด้วย Timestamp + เลขสุ่ม
+                        let uniqueName = `uploads/tg_${Date.now()}_${Math.random().toString(36).substring(2, 8)}.jpg`;
 
-                        // อัปโหลดขึ้น GitHub repository
+                        // อัปโหลดขึ้น GitHub
                         await axios.put(`https://api.github.com/repos/${GITHUB_REPO}/contents/${uniqueName}`, {
-                            message: 'Upload image from Telegram bot',
+                            message: 'Upload image bundle from Telegram bot',
                             content: base64Image
                         }, { headers: { Authorization: `token ${GITHUB_TOKEN}` } });
 
-                        // สร้าง Public URL จาก GitHub
                         let publicImageUrl = `https://raw.githubusercontent.com/${GITHUB_REPO}/main/${uniqueName}`;
 
-                        // ส่งรูปผ่าน Messenger API ไปยังเป้าหมายที่ล็อกไว้ (lockedTargetPsid)
+                        // ส่งภาพเข้า Messenger ของลูกค้าที่ล็อกเป้าไว้
                         await sendMessengerImage(lockedTargetPsid, publicImageUrl);
                         await sendTelegramMessage(`🖼 ส่งรูปภาพไปยังแชท <b>${custName}</b> สำเร็จ!`);
                     } else {
-                        await sendTelegramMessage(`❌ ไม่พบเป้าหมายลูกค้าที่จะส่งรูปภาพไป`);
+                        await sendTelegramMessage(`❌ ไม่พบเป้าหมายลูกค้าในระบบที่จะส่งรูปไป`);
                     }
                 } catch (imgErr) {
                     console.error("❌ ส่งรูปจาก Telegram ไป FB ไม่สำเร็จ:", imgErr.response?.data || imgErr.message);
@@ -662,7 +662,7 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
                 }
             }
 
-            // 2. จัดการข้อความ/คำสั่ง (ใช้ lockedTargetPsid เช่นกัน)
+            // 2. จัดการข้อความหรือคำสั่งตัวหนังสือ
             if (actualText) {
                 let today = getThaiDate();
                 if (lockedTargetPsid) {
@@ -717,7 +717,6 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
     }
     res.status(200).send('OK');
 });
-
 // 9. ลิงก์ทดสอบด่วน /admin-test
 app.get('/admin-test', async (req, res) => {
     let psid = req.query.id;
