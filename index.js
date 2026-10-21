@@ -38,14 +38,22 @@ function getThaiDate() {
     return formatter.format(new Date());
 }
 
-// ฟังก์ชันส่งข้อความแจ้งเตือนไป Telegram
+// ฟังก์ชันส่งข้อความแจ้งเตือนไป Telegram (พร้อมปุ่มเมนูด้านล่าง)
 async function sendTelegramMessage(text) {
     if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
     try {
         await axios.post(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
             chat_id: TELEGRAM_CHAT_ID,
             text: text,
-            parse_mode: 'HTML'
+            parse_mode: 'HTML',
+            reply_markup: {
+                keyboard: [
+                    ["พี่บอย", "มาดามแป้ง"],
+                    ["ดาอี"]
+                ],
+                resize_keyboard: true,
+                is_persistent: true
+            }
         });
     } catch (err) {
         console.error("❌ ส่ง Telegram Message ไม่สำเร็จ:", err.response?.data || err.message);
@@ -123,7 +131,7 @@ async function sendMessengerMessage(recipientId, messageText) {
     }
 }
 
-// ฟังก์ชันส่งรูปภาพทาง Messenger
+// ฟังก์ชันส่งรูปภาพเดี่ยวทาง Messenger
 async function sendMessengerImage(recipientId, imageUrl) {
     try {
         if (!PAGE_ACCESS_TOKEN || PAGE_ACCESS_TOKEN === "your_page_access_token_here") return;
@@ -139,10 +147,65 @@ async function sendMessengerImage(recipientId, imageUrl) {
                 }
             }
         });
-        console.log("🖼 ส่งรูปภาพสำเร็จ PSID:", recipientId);
+        console.log("🖼 ส่งรูปภาพเดี่ยวสำเร็จ PSID:", recipientId);
     } catch (error) {
         console.error("❌ Error sending image:", error.response?.data || error.message);
     }
+}
+
+// --- ระบบคิวสำหรับรวมรูปส่งเป็นอัลบั้มไป Facebook Messenger ---
+let dbMediaQueues = {}; 
+
+async function queueAndSendMessengerAlbum(recipientId, imageUrl) {
+    if (!dbMediaQueues[recipientId]) {
+        dbMediaQueues[recipientId] = {
+            images: [],
+            timer: null
+        };
+    }
+
+    dbMediaQueues[recipientId].images.push(imageUrl);
+
+    if (dbMediaQueues[recipientId].timer) {
+        clearTimeout(dbMediaQueues[recipientId].timer);
+    }
+
+    dbMediaQueues[recipientId].timer = setTimeout(async () => {
+        let imagesToSend = dbMediaQueues[recipientId].images;
+        delete dbMediaQueues[recipientId];
+
+        try {
+            if (!PAGE_ACCESS_TOKEN || PAGE_ACCESS_TOKEN === "your_page_access_token_here") return;
+
+            if (imagesToSend.length > 1) {
+                let elements = imagesToSend.slice(0, 10).map(url => ({
+                    media_type: "image",
+                    url: url
+                }));
+
+                await axios.post(`https://graph.facebook.com/v21.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`, {
+                    recipient: { id: recipientId },
+                    message: {
+                        attachment: {
+                            type: "template",
+                            payload: {
+                                template_type: "media",
+                                elements: elements
+                            }
+                        }
+                    }
+                });
+                console.log(`🖼 ส่งอัลบั้มภาพ (${imagesToSend.length} รูป) สำเร็จ PSID:`, recipientId);
+            } else if (imagesToSend.length === 1) {
+                await sendMessengerImage(recipientId, imagesToSend[0]);
+            }
+        } catch (error) {
+            console.error("❌ Error sending media album:", error.response?.data || error.message);
+            for (let url of imagesToSend) {
+                await sendMessengerImage(recipientId, url);
+            }
+        }
+    }, 1500); 
 }
 
 // 3. หน้าแรก
@@ -460,7 +523,8 @@ app.post('/customer-action', express.json({ limit: '20mb' }), async (req, res) =
             }, { headers: { Authorization: `token ${GITHUB_TOKEN}` } });
 
             let publicImageUrl = `https://raw.githubusercontent.com/${GITHUB_REPO}/main/${uniqueName}`;
-            await sendMessengerImage(psid, publicImageUrl);
+            // ใช้ระบบส่งแบบอัลบั้มรองรับกรณีส่งหลายรูปพร้อมกันจากเว็บ
+            await queueAndSendMessengerAlbum(psid, publicImageUrl);
             return res.send("อัปโหลดและส่งรูปสำเร็จ");
         } catch (err) {
             console.error("❌ อัปโหลดรูปขึ้น GitHub ไม่สำเร็จ:", err.response?.data || err.message);
@@ -533,7 +597,7 @@ app.post('/customer-action', express.json({ limit: '20mb' }), async (req, res) =
     await saveToGitHub();
 });
 
-// 7. Webhook รับข้อความและรูปภาพจาก Messenger (พร้อมส่งต่อเข้า Telegram)
+// 7. Webhook รับข้อความและรูปภาพจาก Messenger
 app.post('/webhook', async (req, res) => {
     let body = req.body;
     if (body.object === 'page') {
@@ -541,14 +605,12 @@ app.post('/webhook', async (req, res) => {
             let webhook_event = entry.messaging[0];
             let senderPSID = webhook_event.sender.id;
 
-            // 🚫 บล็อกไม่ให้รับข้อความหรือรูปภาพจาก Page ID ของแอดมินเอง
             if (senderPSID === "1422397037618559") continue;
 
             if (webhook_event.message) {
                 let msg = webhook_event.message;
                 let custName = db[senderPSID]?.name || `PSID: ${senderPSID}`;
 
-                // 1. ข้อความตัวหนังสือ
                 if (msg.text) {
                     let incomingText = msg.text.trim();
                     recentCustomers[senderPSID] = { lastMessage: incomingText, time: getThaiTime() };
@@ -574,7 +636,6 @@ app.post('/webhook', async (req, res) => {
                     if (replyMessage) await sendMessengerMessage(senderPSID, replyMessage);
                 }
 
-                // 2. รูปภาพ/สลิป
                 if (msg.attachments && msg.attachments.length > 0) {
                     for (let attachment of msg.attachments) {
                         if (attachment.type === 'image') {
@@ -604,7 +665,7 @@ function setAdminLock(psid) {
     }, 30000);
 }
 
-// 8. Webhook สำหรับรับคำสั่งจาก Telegram (แอดมินพิมพ์คุยโต้ตอบและสั่งงาน)
+// 8. Webhook สำหรับรับคำสั่งจาก Telegram (รวมระบบส่งรูปอัลบั้มอัตโนมัติ)
 app.post('/telegram-webhook', express.json(), async (req, res) => {
     let update = req.body;
     if (update.message && update.message.chat) {
@@ -614,12 +675,10 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
             let messageObj = update.message;
             let text = messageObj.text || messageObj.caption || "";
             let photoArray = messageObj.photo;
-            let mediaGroupId = messageObj.media_group_id;
 
             let targetPsid = null;
             let actualText = text;
 
-            // 1. ลำดับที่ 1: เช็คจากชื่อที่แอดมินพิมพ์กำกับมา (รองรับ พี/พี่ บอย)
             if (text) {
                 let parts = text.trim().split(/\s+/);
                 let found = findPsidByNameQuery(parts[0]);
@@ -630,19 +689,16 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
                 }
             }
 
-            // 2. ลำดับที่ 2: ถ้าไม่ได้พิมพ์ชื่อ แต่กำลังอยู่ในช่วงล็อก 30 วิ ให้ใช้เป้าหมายเดิมต่อเนื่อง
             if (!targetPsid && lockedAdminTargetPsid) {
                 targetPsid = lockedAdminTargetPsid;
                 setAdminLock(targetPsid); 
             }
 
-            // 3. ลำดับที่ 3: ดึงจากลูกค้ารายล่าสุด (Recent Customers)
             if (!targetPsid) {
                 let recentKeys = Object.keys(recentCustomers);
                 targetPsid = recentKeys.length > 0 ? recentKeys[recentKeys.length - 1] : null;
             }
 
-            // 4. ลำดับที่ 4: ดึงจากฐานข้อมูลตัวสุดท้าย
             if (!targetPsid) {
                 let allPsids = Object.keys(db);
                 if (allPsids.length > 0) {
@@ -655,7 +711,7 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
                 setAdminLock(lockedTargetPsid); 
             }
 
-            // 1. จัดการรูปภาพ
+            // 1. จัดการรูปภาพ (ส่งผ่านระบบคิวอัลบั้ม)
             if (photoArray && photoArray.length > 0) {
                 let largestPhoto = photoArray[photoArray.length - 1];
                 let fileId = largestPhoto.file_id;
@@ -680,8 +736,9 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
 
                         let publicImageUrl = `https://raw.githubusercontent.com/${GITHUB_REPO}/main/${uniqueName}`;
 
-                        await sendMessengerImage(lockedTargetPsid, publicImageUrl);
-                        await sendTelegramMessage(`🖼 ส่งรูปภาพไปยังแชท <b>${custName}</b> สำเร็จ!`);
+                        // เรียกใช้งานฟังก์ชันส่งภาพแบบรวมกลุ่มอัลบั้ม
+                        await queueAndSendMessengerAlbum(lockedTargetPsid, publicImageUrl);
+                        await sendTelegramMessage(`🖼 กำลังส่งรูปภาพไปยังแชท <b>${custName}</b> (ระบบจัดกลุ่มอัลบั้ม)...`);
 
                     } else {
                         await sendTelegramMessage(`❌ ไม่พบเป้าหมายลูกค้าในระบบที่จะส่งรูปไป`);
@@ -781,29 +838,3 @@ const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
     console.log(`Webhook server is running on port ${PORT}`);
 });
-// ฟังก์ชันส่งปุ่มเมนูรายชื่อให้แอดมินใน Telegram อัตโนมัติเมื่อเริ่มระบบ
-async function sendAdminMenuButtons() {
-    if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
-    try {
-        await axios.post(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
-            chat_id: TELEGRAM_CHAT_ID,
-           
-            parse_mode: 'HTML',
-            reply_markup: {
-                keyboard: [
-                    ["พี่บอย", "มาดามแป้ง"],
-                    ["ดาอี"]
-                ],
-                resize_keyboard: true,
-                is_persistent: true
-            }
-        });
-    } catch (err) {
-        console.error("❌ ส่งปุ่มเมนูไม่สำเร็จ:", err.response?.data || err.message);
-    }
-}
-
-// เรียกใช้งานฟังก์ชันส่งปุ่มเมนูหลังจากบอทสตาร์ท
-setTimeout(() => {
-    sendAdminMenuButtons();
-}, 3000);
