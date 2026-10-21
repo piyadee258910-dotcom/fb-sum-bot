@@ -787,7 +787,7 @@ async function sendAdminMenuButtons() {
     try {
         await axios.post(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
             chat_id: TELEGRAM_CHAT_ID,
-            text: "🚀 <b>ระบบบอทพร้อมใช้งานแล้ว!</b>\nเลือกชื่อลูกค้าจากปุ่มด้านล่างเพื่อส่งรูปหรือจัดการยอดได้เลยครับ:",
+           
             parse_mode: 'HTML',
             reply_markup: {
                 keyboard: [
