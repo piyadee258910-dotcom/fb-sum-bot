@@ -609,28 +609,48 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
                 }
             }
 
-            // 1. จัดการรูปภาพ
-            if (photoArray && photoArray.length > 0) {
-                let largestPhoto = photoArray[photoArray.length - 1];
-                let fileId = largestPhoto.file_id;
+            // 1. จัดการรูปภาพ (ปรับปรุงใหม่ให้อัปโหลดขึ้น GitHub ก่อนส่งเข้า Messenger)
+if (photoArray && photoArray.length > 0) {
+    let largestPhoto = photoArray[photoArray.length - 1];
+    let fileId = largestPhoto.file_id;
 
-                try {
-                    let fileRes = await axios.get(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getFile?file_id=${fileId}`);
-                    let filePath = fileRes.data.result.file_path;
-                    let telegramPhotoUrl = `https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${filePath}`;
+    try {
+        // ดึง File Path จาก Telegram
+        let fileRes = await axios.get(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getFile?file_id=${fileId}`);
+        let filePath = fileRes.data.result.file_path;
+        let telegramPhotoUrl = `https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${filePath}`;
 
-                    if (targetPsid) {
-                        await sendMessengerImage(targetPsid, telegramPhotoUrl);
-                        let custName = db[targetPsid]?.name || targetPsid;
-                        await sendTelegramMessage(`🖼 ส่งรูปภาพไปยังแชท <b>${custName}</b> สำเร็จ!`);
-                    } else {
-                        await sendTelegramMessage(`❌ ไม่พบเป้าหมายลูกค้าที่จะส่งรูปภาพไป`);
-                    }
-                } catch (imgErr) {
-                    console.error("❌ ส่งรูปจาก Telegram ไป FB ไม่สำเร็จ:", imgErr.message);
-                    await sendTelegramMessage(`❌ ส่งรูปภาพไม่สำเร็จ`);
-                }
-            }
+        if (targetPsid) {
+            let custName = db[targetPsid]?.name || targetPsid;
+            await sendTelegramMessage(`⏳กำลังประมวลผลและส่งรูปภาพไปยังแชท <b>${custName}</b>...`);
+
+            // ดาวน์โหลดรูปภาพมาเป็น buffer
+            let imageResponse = await axios.get(telegramPhotoUrl, { responseType: 'arraybuffer' });
+            let base64Image = Buffer.from(imageResponse.data).from ? Buffer.from(imageResponse.data).toString('base64') : Buffer.from(imageResponse.data, 'binary').toString('base64');
+            
+            // ตั้งชื่อไฟล์ชั่วคราวบน GitHub
+            let uniqueName = `uploads/tg_${Date.now()}.jpg`;
+
+            // อัปโหลดขึ้น GitHub repository ของคุณ
+            await axios.put(`https://api.github.com/repos/${GITHUB_REPO}/contents/${uniqueName}`, {
+                message: 'Upload image from Telegram bot',
+                content: base64Image
+            }, { headers: { Authorization: `token ${GITHUB_TOKEN}` } });
+
+            // สร้าง Public URL จาก GitHub เพื่อส่งให้ Facebook
+            let publicImageUrl = `https://raw.githubusercontent.com/${GITHUB_REPO}/main/${uniqueName}`;
+
+            // ส่งรูปผ่าน Messenger API
+            await sendMessengerImage(targetPsid, publicImageUrl);
+            await sendTelegramMessage(`🖼 ส่งรูปภาพไปยังแชท <b>${custName}</b> สำเร็จ!`);
+        } else {
+            await sendTelegramMessage(`❌ ไม่พบเป้าหมายลูกค้าที่จะส่งรูปภาพไป`);
+        }
+    } catch (imgErr) {
+        console.error("❌ ส่งรูปจาก Telegram ไป FB ไม่สำเร็จ:", imgErr.response?.data || imgErr.message);
+        await sendTelegramMessage(`❌ ส่งรูปภาพไม่สำเร็จ: ${imgErr.message}`);
+    }
+}
 
             // 2. จัดการข้อความ/คำสั่ง
             if (actualText) {
