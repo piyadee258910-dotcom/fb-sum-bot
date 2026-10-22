@@ -17,6 +17,10 @@ const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 let db = {};
 let recentCustomers = {};
 
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 function getThaiTime() {
     return new Date().toLocaleTimeString('en-GB', { 
         timeZone: 'Asia/Bangkok', 
@@ -707,6 +711,10 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
                         }, { headers: { Authorization: `token ${GITHUB_TOKEN}` } });
 
                         let publicGithubUrl = `https://raw.githubusercontent.com/${GITHUB_REPO}/main/${uniqueName}`;
+
+                        // ⏱ หน่วงเวลา 10 วินาทีก่อนส่งรูปป้องกันโดน Facebook/LINE บล็อก
+                        console.log("⏳ กำลังรอ 10 วินาทีก่อนส่งรูป...");
+                        await sleep(10000);
 
                         if (lockedTargetId.startsWith('U')) {
                             await sendLineImage(lockedTargetId, publicGithubUrl);
