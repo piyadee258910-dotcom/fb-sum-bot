@@ -186,7 +186,6 @@ async function sendLineImage(userId, imageUrl) {
 async function sendLineFlexImages(userId, imageUrls) {
     if (!LINE_CHANNEL_ACCESS_TOKEN || !imageUrls || imageUrls.length === 0) return;
     
-    // สร้างการ์ด (Bubbles) สำหรับรูปภาพแต่ละรูป (จำกัดไม่เกิน 10 รูปต่อ 1 Flex Carousel)
     let bubbles = imageUrls.slice(0, 10).map((url, index) => ({
         type: "bubble",
         hero: {
@@ -761,6 +760,7 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
             if (lockedTargetId) {
                 let custName = db[lockedTargetId]?.name || lockedTargetId;
 
+                // กรณีแอดมินส่งรูปภาพ/สลิปจาก Telegram ไปหาลูกค้า
                 if (photo && photo.length > 0) {
                     let fileId = photo[photo.length - 1].file_id;
                     try {
@@ -769,17 +769,20 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
                         let downloadUrl = `https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${filePath}`;
 
                         if (lockedTargetId.startsWith('U')) {
-                            // ใช้ฟังก์ชันส่งรูปแบบ Flex Message คารูเซลเลื่อนดูได้
+                            // ส่งเข้า LINE เป็น Flex Message
                             await sendLineFlexImages(lockedTargetId, [downloadUrl]);
+                            await sendTelegramMessage(`🖼 ส่งการ์ดรูปภาพ (Flex) หา LINE <b>${custName}</b> เรียบร้อยแล้ว!`);
                         } else {
+                            // ส่งเข้า Facebook Messenger
                             await sendMessengerImage(lockedTargetId, downloadUrl);
+                            await sendTelegramMessage(`🖼 ส่งรูปภาพหา Facebook <b>${custName}</b> เรียบร้อยแล้ว!`);
                         }
-                        await sendTelegramMessage(`🖼 ส่งการ์ดรูปภาพ (Flex) หา <b>${custName}</b> เรียบร้อยแล้ว!`);
                     } catch (err) {
                         console.error("❌ ส่งรูปจาก Telegram ไม่สำเร็จ:", err.message);
                         await sendTelegramMessage(`❌ ส่งรูปภาพไม่สำเร็จ`);
                     }
                 } 
+                // กรณีแอดมินส่งข้อความตัวหนังสือหรือคำสั่งเพิ่มยอด
                 else if (actualText) {
                     let today = getThaiDate();
                     if (actualText.startsWith('.')) {
