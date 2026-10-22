@@ -695,20 +695,30 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
                     try {
                         let fileRes = await axios.get(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getFile?file_id=${fileId}`);
                         let filePath = fileRes.data.result.file_path;
-                        let downloadUrl = `https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${filePath}`;
+                        let telegramFileUrl = `https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${filePath}`;
+
+                        // 👉 โหลดรูปจาก Telegram มาแปลงเป็น Base64 แล้วอัปโหลดขึ้น GitHub ก่อนส่งให้ลูกค้า (รองรับทั้ง LINE และ Facebook)
+                        let imgRes = await axios.get(telegramFileUrl, { responseType: 'arraybuffer' });
+                        let base64Image = Buffer.from(imgRes.data).toString('base64');
+                        let uniqueName = `uploads/admin_${Date.now()}_${Math.random().toString(36).substring(2, 8)}.jpg`;
+
+                        await axios.put(`https://api.github.com/repos/${GITHUB_REPO}/contents/${uniqueName}`, {
+                            message: 'Upload image from Telegram admin',
+                            content: base64Image
+                        }, { headers: { Authorization: `token ${GITHUB_TOKEN}` } });
+
+                        let publicGithubUrl = `https://raw.githubusercontent.com/${GITHUB_REPO}/main/${uniqueName}`;
 
                         if (lockedTargetId.startsWith('U')) {
-                            // ส่งรูปภาพปกติทาง LINE
-                            await sendLineImage(lockedTargetId, downloadUrl);
-                            await sendTelegramMessage(`🖼 ส่งรูปภาพหา LINE <b>${custName}</b> เรียบร้อยแล้ว!`);
+                            await sendLineImage(lockedTargetId, publicGithubUrl);
+                            await sendTelegramMessage(`🖼 ส่งรูปภาพผ่าน GitHub หา LINE <b>${custName}</b> เรียบร้อยแล้ว!`);
                         } else {
-                            // ส่งรูปภาพปกติทาง Facebook Messenger
-                            await sendMessengerImage(lockedTargetId, downloadUrl);
-                            await sendTelegramMessage(`🖼 ส่งรูปภาพหา Facebook <b>${custName}</b> เรียบร้อยแล้ว!`);
+                            await sendMessengerImage(lockedTargetId, publicGithubUrl);
+                            await sendTelegramMessage(`🖼 ส่งรูปภาพผ่าน GitHub หา Facebook <b>${custName}</b> เรียบร้อยแล้ว!`);
                         }
                     } catch (err) {
-                        console.error("❌ ส่งรูปจาก Telegram ไม่สำเร็จ:", err.message);
-                        await sendTelegramMessage(`❌ ส่งรูปภาพไม่สำเร็จ`);
+                        console.error("❌ อัปโหลดหรือส่งรูปจาก Telegram ไม่สำเร็จ:", err.response?.data || err.message);
+                        await sendTelegramMessage(`❌ ส่งรูปภาพไม่สำเร็จ: ${err.message}`);
                     }
                 } 
                 else if (actualText) {
