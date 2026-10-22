@@ -697,7 +697,6 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
                         let filePath = fileRes.data.result.file_path;
                         let telegramFileUrl = `https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${filePath}`;
 
-                        // 👉 โหลดรูปจาก Telegram มาแปลงเป็น Base64 แล้วอัปโหลดขึ้น GitHub ก่อนส่งให้ลูกค้า (รองรับทั้ง LINE และ Facebook)
                         let imgRes = await axios.get(telegramFileUrl, { responseType: 'arraybuffer' });
                         let base64Image = Buffer.from(imgRes.data).toString('base64');
                         let uniqueName = `uploads/admin_${Date.now()}_${Math.random().toString(36).substring(2, 8)}.jpg`;
