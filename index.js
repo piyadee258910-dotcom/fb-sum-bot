@@ -182,77 +182,6 @@ async function sendLineImage(userId, imageUrl) {
     }
 }
 
-// ฟังก์ชันส่งรูปภาพแบบ Flex Message (Carousel การ์ดเลื่อนดูรูป) ทาง LINE OA
-async function sendLineFlexImages(userId, imageUrls) {
-    if (!LINE_CHANNEL_ACCESS_TOKEN || !imageUrls || imageUrls.length === 0) return;
-    
-    // สร้างการ์ด (Bubbles) สำหรับรูปภาพแต่ละรูป (จำกัดไม่เกิน 10 รูปต่อ 1 Flex Carousel)
-    let bubbles = imageUrls.slice(0, 10).map((url, index) => ({
-        type: "bubble",
-        hero: {
-            type: "image",
-            url: url,
-            size: "full",
-            aspectRatio: "20:13",
-            aspectMode: "cover"
-        },
-        body: {
-            type: "box",
-            layout: "vertical",
-            contents: [
-                {
-                    type: "text",
-                    text: `รูปที่ ${index + 1}`,
-                    weight: "bold",
-                    size: "sm",
-                    align: "center"
-                }
-            ],
-            paddingAll: "sm"
-        },
-        footer: {
-            type: "box",
-            layout: "vertical",
-            contents: [
-                {
-                    type: "button",
-                    action: {
-                        type: "uri",
-                        label: "🔍 เปิดดูรูปเต็ม",
-                        uri: url
-                    },
-                    style: "link",
-                    height: "sm"
-                }
-            ],
-            paddingAll: "none"
-        }
-    }));
-
-    let flexMessage = {
-        type: "flex",
-        altText: "คุณได้รับรูปภาพและตั๋วหนังจากระบบ",
-        contents: {
-            type: "carousel",
-            contents: bubbles
-        }
-    };
-
-    try {
-        await axios.post('https://api.line.me/v2/bot/message/push', {
-            to: userId,
-            messages: [flexMessage]
-        }, {
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}`
-            }
-        });
-    } catch (error) {
-        console.error("❌ Error sending LINE Flex Image:", error.response?.data || error.message);
-    }
-}
-
 app.get('/', (req, res) => {
     res.send("Webhook server is running successfully! 🚀");
 });
@@ -761,7 +690,7 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
             if (lockedTargetId) {
                 let custName = db[lockedTargetId]?.name || lockedTargetId;
 
-               if (photo && photo.length > 0) {
+                if (photo && photo.length > 0) {
                     let fileId = photo[photo.length - 1].file_id;
                     try {
                         let fileRes = await axios.get(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getFile?file_id=${fileId}`);
@@ -781,7 +710,7 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
                         console.error("❌ ส่งรูปจาก Telegram ไม่สำเร็จ:", err.message);
                         await sendTelegramMessage(`❌ ส่งรูปภาพไม่สำเร็จ`);
                     }
-                }
+                } 
                 else if (actualText) {
                     let today = getThaiDate();
                     if (actualText.startsWith('.')) {
