@@ -182,6 +182,77 @@ async function sendLineImage(userId, imageUrl) {
     }
 }
 
+// ฟังก์ชันส่งรูปภาพแบบ Flex Message (Carousel การ์ดเลื่อนดูรูป) ทาง LINE OA
+async function sendLineFlexImages(userId, imageUrls) {
+    if (!LINE_CHANNEL_ACCESS_TOKEN || !imageUrls || imageUrls.length === 0) return;
+    
+    // สร้างการ์ด (Bubbles) สำหรับรูปภาพแต่ละรูป (จำกัดไม่เกิน 10 รูปต่อ 1 Flex Carousel)
+    let bubbles = imageUrls.slice(0, 10).map((url, index) => ({
+        type: "bubble",
+        hero: {
+            type: "image",
+            url: url,
+            size: "full",
+            aspectRatio: "20:13",
+            aspectMode: "cover"
+        },
+        body: {
+            type: "box",
+            layout: "vertical",
+            contents: [
+                {
+                    type: "text",
+                    text: `รูปที่ ${index + 1}`,
+                    weight: "bold",
+                    size: "sm",
+                    align: "center"
+                }
+            ],
+            paddingAll: "sm"
+        },
+        footer: {
+            type: "box",
+            layout: "vertical",
+            contents: [
+                {
+                    type: "button",
+                    action: {
+                        type: "uri",
+                        label: "🔍 เปิดดูรูปเต็ม",
+                        uri: url
+                    },
+                    style: "link",
+                    height: "sm"
+                }
+            ],
+            paddingAll: "none"
+        }
+    }));
+
+    let flexMessage = {
+        type: "flex",
+        altText: "คุณได้รับรูปภาพและตั๋วหนังจากระบบ",
+        contents: {
+            type: "carousel",
+            contents: bubbles
+        }
+    };
+
+    try {
+        await axios.post('https://api.line.me/v2/bot/message/push', {
+            to: userId,
+            messages: [flexMessage]
+        }, {
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}`
+            }
+        });
+    } catch (error) {
+        console.error("❌ Error sending LINE Flex Image:", error.response?.data || error.message);
+    }
+}
+
 app.get('/', (req, res) => {
     res.send("Webhook server is running successfully! 🚀");
 });
@@ -690,8 +761,7 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
             if (lockedTargetId) {
                 let custName = db[lockedTargetId]?.name || lockedTargetId;
 
-                // กรณีแอดมินส่งรูปภาพ/สลิปจาก Telegram ไปหาลูกค้า
-                if (photo && photo.length > 0) {
+               if (photo && photo.length > 0) {
                     let fileId = photo[photo.length - 1].file_id;
                     try {
                         let fileRes = await axios.get(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getFile?file_id=${fileId}`);
@@ -699,11 +769,11 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
                         let downloadUrl = `https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${filePath}`;
 
                         if (lockedTargetId.startsWith('U')) {
-                            // ส่งเข้า LINE เป็นรูปภาพปกติ
+                            // ส่งรูปภาพปกติทาง LINE
                             await sendLineImage(lockedTargetId, downloadUrl);
                             await sendTelegramMessage(`🖼 ส่งรูปภาพหา LINE <b>${custName}</b> เรียบร้อยแล้ว!`);
                         } else {
-                            // ส่งเข้า Facebook Messenger
+                            // ส่งรูปภาพปกติทาง Facebook Messenger
                             await sendMessengerImage(lockedTargetId, downloadUrl);
                             await sendTelegramMessage(`🖼 ส่งรูปภาพหา Facebook <b>${custName}</b> เรียบร้อยแล้ว!`);
                         }
@@ -711,8 +781,7 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
                         console.error("❌ ส่งรูปจาก Telegram ไม่สำเร็จ:", err.message);
                         await sendTelegramMessage(`❌ ส่งรูปภาพไม่สำเร็จ`);
                     }
-                } 
-                // กรณีแอดมินส่งข้อความตัวหนังสือหรือคำสั่งเพิ่มยอด
+                }
                 else if (actualText) {
                     let today = getThaiDate();
                     if (actualText.startsWith('.')) {
@@ -735,4 +804,58 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
                             } else {
                                 await sendMessengerMessage(lockedTargetId, reportMsg);
                             }
-                            await sendTelegramMessage(
+                            await sendTelegramMessage(`✅ บันทึกยอด +${amount} ให้ <b>${custName}</b> และส่งยอดให้ลูกค้าแล้ว! (ยอดวันนี้: ${total} บาท)`);
+                        }
+                    } else {
+                        if (lockedTargetId.startsWith('U')) {
+                            await sendLineMessage(lockedTargetId, actualText);
+                        } else {
+                            await sendMessengerMessage(lockedTargetId, actualText);
+                        }
+                        await sendTelegramMessage(`📤 ส่งข้อความหา <b>${custName}</b> เรียบร้อย:\n"${actualText}"`);
+                    }
+                }
+            } else {
+                await sendTelegramMessage(`❌ ไม่พบเป้าหมายลูกค้าในระบบ`);
+            }
+        }
+    }
+    res.status(200).send('OK');
+});
+
+app.get('/admin-test', async (req, res) => {
+    let psid = req.query.id;
+    let text = req.query.text;
+    if (!psid || !text) return res.send("❌ กรุณาระบุ ?id=ID&text=ข้อความ");
+
+    let today = getThaiDate();
+    if (!db[psid]) db[psid] = {};
+    if (!db[psid][today]) db[psid][today] = [];
+
+    let amount = parseFloat(text.replace(/^\.+/, ''));
+    let replyMessage = "";
+    if (!isNaN(amount)) {
+        let timeNow = getThaiTime();
+        db[psid][today].push({ time: timeNow, amount: amount });
+        sortItemsByTime(db[psid][today]);
+        await saveToGitHub();
+
+        let total = db[psid][today].reduce((sum, item) => sum + item.amount, 0);
+        let listText = db[psid][today].map((item, idx) => `${idx + 1}. [${item.time}] +${item.amount}`).join('\n');
+        replyMessage = `📅 [${today}] รายการประจำวัน:\n${listText}\n-------------------\n💰 ยอดรวมของวัน: ${total} บาท`;
+    } else {
+        replyMessage = `⚙ แอดมิน: ${text}`;
+    }
+
+    if (psid.startsWith('U')) {
+        await sendLineMessage(psid, replyMessage);
+    } else {
+        await sendMessengerMessage(psid, replyMessage);
+    }
+    res.send(`✅ ดำเนินการให้ ID: ${psid} เรียบร้อย!`);
+});
+
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => {
+    console.log(`Webhook server is running on port ${PORT}`);
+});
