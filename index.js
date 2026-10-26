@@ -214,7 +214,10 @@ app.get('/admin', (req, res) => {
         <head><meta charset="utf-8"><title>Admin Quick Dashboard</title></head>
         <body style="font-family: sans-serif; background: #f0f2f5; padding: 20px; max-width: 650px; margin: auto;">
             <h2>🚀 แผงควบคุมด่วนแอดมิน</h2>
-            <p><a href="/customer" style="color: #007bff; font-weight: bold; text-decoration: none;">📋 ไปที่หน้าจัดการข้อมูลลูกค้าทั้งหมด (/customer)</a></p>
+            <p>
+                <a href="/customer-grid" style="color: #28a745; font-weight: bold; text-decoration: none; margin-right: 15px;">🔲 เปิดหน้าตารางด่วน (/customer-grid)</a>
+                <a href="/customer" style="color: #007bff; font-weight: bold; text-decoration: none;">📋 หน้าจัดการข้อมูลทั้งหมด (/customer)</a>
+            </p>
             <hr style="margin-bottom: 20px; border: 0; border-top: 1px solid #ccc;">
             ${customerListHTML || '<p style="color: #666;">ยังไม่มีประวัติลูกค้าทักเข้ามา</p>'}
             <script>
@@ -228,6 +231,160 @@ app.get('/admin', (req, res) => {
     `);
 });
 
+// 🔲 หน้าใหม่: ตารางปุ่มสี่เหลี่ยม (Customer Grid Dashboard) รองรับย่อขยายหน้าจอเต็มเสมอ กดที่ชื่อแล้วใส่ยอดกด Enter ได้เลย
+app.get('/customer-grid', (req, res) => {
+    let gridCardsHTML = '';
+    
+    for (let psid in db) {
+        let cust = db[psid];
+        let custName = cust.name || "ยังไม่ตั้งชื่อ";
+        
+        let totalAllDays = 0;
+        for (let date in cust) {
+            if (date === 'name') continue;
+            let items = cust[date];
+            if (Array.isArray(items)) {
+                totalAllDays += items.reduce((sum, item) => sum + item.amount, 0);
+            }
+        }
+
+        gridCardsHTML += `
+            <div class="customer-card" onclick="quickAddAmount('${psid}', '${custName}')">
+                <div class="cust-name">${custName}</div>
+                <div class="cust-id">${psid}</div>
+                <div class="cust-total">ยอดรวม: <span>${totalAllDays}</span> ฿</div>
+            </div>
+        `;
+    }
+
+    if (Object.keys(db).length === 0) {
+        gridCardsHTML = '<p style="text-align: center; color: #888; grid-column: 1 / -1; font-size: 18px; padding: 40px;">ยังไม่มีข้อมูลลูกค้าในระบบ</p>';
+    }
+
+    res.send(`
+        <!DOCTYPE html>
+        <html lang="th">
+        <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Customer Grid Dashboard</title>
+            <style>
+                * { box-sizing: border-box; }
+                body {
+                    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                    background: #f4f6f9;
+                    margin: 0;
+                    padding: 20px;
+                }
+                h2 { color: #333; margin-bottom: 5px; }
+                .nav-links { margin-bottom: 20px; }
+                .nav-links a {
+                    color: #007bff;
+                    text-decoration: none;
+                    font-weight: bold;
+                    margin-right: 15px;
+                }
+                .nav-links a:hover { text-decoration: underline; }
+                
+                .grid-container {
+                    display: grid;
+                    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+                    gap: 15px;
+                    width: 100%;
+                }
+                
+                .customer-card {
+                    background: #ffffff;
+                    border: 2px solid #e2e8f0;
+                    border-radius: 12px;
+                    padding: 20px 15px;
+                    text-align: center;
+                    cursor: pointer;
+                    box-shadow: 0 4px 6px rgba(0,0,0,0.02);
+                    transition: all 0.2s ease-in-out;
+                    display: flex;
+                    flex-direction: column;
+                    justify-content: center;
+                    align-items: center;
+                    min-height: 120px;
+                }
+                .customer-card:hover {
+                    transform: translateY(-4px);
+                    border-color: #007bff;
+                    box-shadow: 0 6px 12px rgba(0, 123, 255, 0.15);
+                    background: #f8fbff;
+                }
+                .customer-card:active { transform: scale(0.97); }
+                
+                .cust-name {
+                    font-size: 18px;
+                    font-weight: bold;
+                    color: #2d3748;
+                    margin-bottom: 6px;
+                    word-break: break-word;
+                }
+                .cust-id {
+                    font-size: 11px;
+                    color: #a0aec0;
+                    margin-bottom: 10px;
+                }
+                .cust-total {
+                    font-size: 14px;
+                    color: #4a5568;
+                    background: #edf2f7;
+                    padding: 4px 10px;
+                    border-radius: 20px;
+                    width: 100%;
+                }
+                .cust-total span { color: #28a745; font-weight: bold; }
+            </style>
+        </head>
+        <body>
+            <h2>🔲 แผงควบคุมด่วนแบบตาราง (Customer Grid)</h2>
+            <div class="nav-links">
+                <a href="/admin">⬅ กลับหน้าแอดมิน</a>
+                <a href="/customer">📋 หน้าจัดการรายชื่อแบบเดิม</a>
+            </div>
+            
+            <div class="grid-container">
+                ${gridCardsHTML}
+            </div>
+
+            <script>
+                function quickAddAmount(psid, custName) {
+                    let input = prompt("เพิ่มยอดให้: [" + custName + "]\\nกรอกจำนวนเงิน (กด Enter เพื่อส่งได้ทันที):");
+                    if (!input) return;
+                    
+                    let cleanInput = input.replace(/[^0-9.]/g, '');
+                    let amount = parseFloat(cleanInput);
+                    
+                    if (isNaN(amount) || amount <= 0) {
+                        alert("❌ จำนวนเงินไม่ถูกต้อง");
+                        return;
+                    }
+
+                    fetch('/customer-action', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ action: 'add', psid: psid, amount: amount })
+                    })
+                    .then(res => res.text())
+                    .then(data => {
+                        alert("✅ สำเร็จ! เพิ่มยอด +" + amount + " ให้ " + custName + " เรียบร้อย");
+                        location.reload();
+                    })
+                    .catch(err => {
+                        alert("❌ เกิดข้อผิดพลาดในการเชื่อมต่อ");
+                        console.error(err);
+                    });
+                }
+            </script>
+        </body>
+        </html>
+    `);
+});
+
+// 📋 หน้าเดิม: จัดการข้อมูลและรายการทั้งหมดทำงานได้สมบูรณ์เช่นเดิม
 app.get('/customer', (req, res) => {
     let htmlContent = '';
     for (let psid in db) {
@@ -306,7 +463,10 @@ app.get('/customer', (req, res) => {
         <head><meta charset="utf-8"><title>Customer Management - /customer</title></head>
         <body style="font-family: sans-serif; background: #f0f2f5; padding: 20px; max-width: 800px; margin: auto;">
             <h2>📋 ระบบจัดการข้อมูลลูกค้าและรายการทั้งหมด (/customer)</h2>
-            <p><a href="/admin" style="color: #007bff; text-decoration: none;">⬅ กลับไปหน้าแอดมินด่วน</a></p>
+            <p>
+                <a href="/customer-grid" style="color: #28a745; font-weight: bold; text-decoration: none; margin-right: 15px;">🔲 เปิดหน้าตารางด่วน (/customer-grid)</a>
+                <a href="/admin" style="color: #007bff; font-weight: bold; text-decoration: none;">⬅ กลับไปหน้าแอดมิน</a>
+            </p>
             <hr style="margin-bottom: 20px; border: 0; border-top: 1px solid #ccc;">
             ${htmlContent}
             <script>
@@ -456,9 +616,16 @@ app.post('/customer-action', express.json({ limit: '20mb' }), async (req, res) =
         if (psid.startsWith('U')) {
             await sendLineMessage(psid, reportMsg);
         } else {
-            await sendMessengerMessage(psid, reportMsg);
+            await sendMessengerMessage(senderPSID || psid, reportMsg);
         }
         return res.send("เพิ่มยอดและส่งข้อความหาลูกค้าสำเร็จ!");
+    } else if (action === 'customAdd') {
+        let targetDate = today;
+        if (!db[psid][targetDate]) db[psid][targetDate] = [];
+        db[psid][targetDate].push({ time: time || timeNow, amount: amount });
+        sortItemsByTime(db[psid][targetDate]);
+        await saveToGitHub();
+        return res.send("เพิ่มรายการแบบกำหนดเวลาสำเร็จ!");
     } else if (action === 'edit') {
         if (db[psid][date] && db[psid][date][index]) {
             db[psid][date][index].amount = amount;
@@ -712,7 +879,6 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
 
                         let publicGithubUrl = `https://raw.githubusercontent.com/${GITHUB_REPO}/main/${uniqueName}`;
 
-                        // ⏱ หน่วงเวลา 10 วินาทีก่อนส่งรูปป้องกันโดน Facebook/LINE บล็อก
                         console.log("⏳ กำลังรอ 10 วินาทีก่อนส่งรูป...");
                         await sleep(10000);
 
