@@ -14,24 +14,14 @@ const LINE_CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN;
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
+// กำหนด LINE User ID ของแอดมินสำหรับพิมพ์สั่งการผ่าน LINE OA
+const ADMIN_LINE_USER_ID = process.env.ADMIN_LINE_USER_ID || "UXXXXXXXXXXXXXXXXXXXXXXXXX"; 
+
 let db = {};
 let recentCustomers = {};
 
-// ระบบจำ messageId ป้องกันการประมวลผลหรือบวกยอดซ้ำวนลูป
-let processedMessageIds = new Set();
-
-function checkAndMarkMessageProcessed(messageId) {
-    if (!messageId) return false;
-    if (processedMessageIds.has(messageId)) {
-        return true; // ข้อความนี้เคยถูกประมวลผลไปแล้ว
-    }
-    processedMessageIds.add(messageId);
-    if (processedMessageIds.size > 1000) {
-        let firstItem = processedMessageIds.values().next().value;
-        processedMessageIds.delete(firstItem);
-    }
-    return false;
-}
+// เก็บรายการ messageId ของ LINE ที่เคยประมวลผลไปแล้ว เพื่อป้องกันการดึงมาวนซ้ำ
+let processedLineMessageIds = new Set();
 
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
@@ -181,19 +171,16 @@ async function sendLineMessage(userId, messageText) {
     }
 }
 
-async function sendLineImages(userId, imageUrls) {
-    if (!LINE_CHANNEL_ACCESS_TOKEN || !imageUrls || imageUrls.length === 0) return;
-    
-    let messages = imageUrls.slice(0, 5).map(url => ({
-        type: 'image',
-        originalContentUrl: url,
-        previewImageUrl: url
-    }));
-
+async function sendLineImage(userId, imageUrl) {
+    if (!LINE_CHANNEL_ACCESS_TOKEN) return;
     try {
         await axios.post('https://api.line.me/v2/bot/message/push', {
             to: userId,
-            messages: messages
+            messages: [{
+                type: 'image',
+                originalContentUrl: imageUrl,
+                previewImageUrl: imageUrl
+            }]
         }, {
             headers: {
                 'Content-Type': 'application/json',
@@ -201,7 +188,7 @@ async function sendLineImages(userId, imageUrls) {
             }
         });
     } catch (error) {
-        console.error("❌ Error sending multiple LINE images:", error.response?.data || error.message);
+        console.error("❌ Error sending LINE image:", error.response?.data || error.message);
     }
 }
 
@@ -478,18 +465,13 @@ app.post('/customer-action', express.json({ limit: '20mb' }), async (req, res) =
             await sendMessengerMessage(psid, reportMsg);
         }
         return res.send("เพิ่มยอดและส่งข้อความหาลูกค้าสำเร็จ!");
-    } else if (action === 'customAdd') {
-        if (!db[psid][today]) db[psid][today] = [];
-        db[psid][today].push({ time: time, amount: amount });
-        sortItemsByTime(db[psid][today]);
-        await saveToGitHub();
-        return res.send("เพิ่มยอดแบบกำหนดเวลาสำเร็จ!");
     } else if (action === 'edit') {
         if (db[psid][date] && db[psid][date][index]) {
             db[psid][date][index].amount = amount;
+            db[psid][date][index].time = timeNow;
             sortItemsByTime(db[psid][date]);
             await saveToGitHub();
-            return res.send("แก้ไขจำนวนเงินเรียบร้อย!");
+            return res.send("แก้ไขข้อมูลและอัปเดตเวลาเรียบร้อย!");
         } else { return res.status(400).send("ไม่พบรายการ"); }
     } else if (action === 'delete') {
         if (db[psid][date] && db[psid][date][index] !== undefined) {
@@ -552,9 +534,6 @@ app.post('/webhook', async (req, res) => {
 
             if (webhook_event.message) {
                 let msg = webhook_event.message;
-                let messageId = msg.mid;
-                if (checkAndMarkMessageProcessed(messageId)) continue;
-
                 let custName = db[senderPSID]?.name || `ID: ${senderPSID}`;
 
                 if (msg.text) {
@@ -567,7 +546,7 @@ app.post('/webhook', async (req, res) => {
                     if (!db[senderPSID][today]) db[senderPSID][today] = [];
 
                     if (incomingText.startsWith('.')) {
-                        let amount = parseFloat(incomingText.replace(/^\.+/, ''));
+                        let amount = parseFloat(incomingText.replace(/^\s*\.\s*/, '').replace(/^\.+/, ''));
                         if (!isNaN(amount)) {
                             let timeNow = getThaiTime();
                             db[senderPSID][today].push({ time: timeNow, amount: amount });
@@ -603,45 +582,83 @@ app.post('/line-webhook', async (req, res) => {
     let body = req.body;
     if (body.events) {
         for (let event of body.events) {
-            let messageId = event.message?.id;
-            
-            // 🛑 เช็กว่าไอดีข้อความนี้เคยประมวลผลไปแล้วหรือยัง ถ้าทำแล้วข้ามทันที ไม่วนลูปซ้ำ!
-            if (checkAndMarkMessageProcessed(messageId)) {
-                continue; 
-            }
-
             if (event.type === 'message' && event.source && event.source.userId) {
                 let userId = event.source.userId;
+                let messageId = event.message.id;
+
+                // 🛡 ตรวจสอบว่า messageId นี้เคยถูกประมวลผลไปแล้วหรือยัง (ป้องกันดึงวนซ้ำ)
+                if (processedLineMessageIds.has(messageId)) {
+                    continue; // ข้ามข้อความนี้ไปเลยถ้าเคยประมวลผลแล้ว
+                }
+                processedLineMessageIds.add(messageId);
+
+                // จำกัดขนาด Set ไม่ให้เก็บเยอะเกินไป (เก็บไว้จำล่าสุด 500 ข้อความ)
+                if (processedLineMessageIds.size > 500) {
+                    let firstItem = processedLineMessageIds.values().next().value;
+                    processedLineMessageIds.delete(firstItem);
+                }
+
                 let custName = db[userId]?.name || `LINE ID: ${userId.substring(0, 8)}`;
 
                 if (event.message.type === 'text') {
                     let incomingText = event.message.text.trim();
+                    let today = getThaiDate();
+                    
+                    // 🛠 กรณีที่ 1: แอดมินพิมพ์สั่งการผ่าน LINE OA (เช่น พิมพ์ ..200 หรือ .200)
+                    if (userId === ADMIN_LINE_USER_ID && incomingText.startsWith('.')) {
+                        let amount = parseFloat(incomingText.replace(/^\s*\.\s*/, '').replace(/^\.+/, ''));
+                        if (!isNaN(amount)) {
+                            let targetId = lockedAdminTargetPsid || Object.keys(recentCustomers)[Object.keys(recentCustomers).length - 1];
+                            
+                            if (targetId) {
+                                if (!db[targetId]) db[targetId] = {};
+                                if (!db[targetId][today]) db[targetId][today] = [];
+                                let timeNow = getThaiTime();
+
+                                db[targetId][today].push({ time: timeNow, amount: amount });
+                                sortItemsByTime(db[targetId][today]);
+                                await saveToGitHub();
+
+                                let total = db[targetId][today].reduce((sum, item) => sum + item.amount, 0);
+                                let listText = db[targetId][today].map((item, idx) => `${idx + 1}. [${item.time}] +${item.amount}`).join('\n');
+                                let reportMsg = `📅 [${today}] รายการประจำวัน:\n${listText}\n-------------------\n💰 ยอดรวมของวัน: ${total} บาท`;
+                                
+                                if (targetId.startsWith('U')) {
+                                    await sendLineMessage(targetId, reportMsg);
+                                } else {
+                                    await sendMessengerMessage(targetId, reportMsg);
+                                }
+                                
+                                await sendLineMessage(userId, `✅ บันทึกยอด +${amount} สำเร็จ! (ยอดวันนี้: ${total} บาท)`);
+                                continue;
+                            }
+                        }
+                    }
+
+                    // 🛠 กรณีที่ 2: ข้อความทั่วไปจากลูกค้าปกติ
                     recentCustomers[userId] = { lastMessage: incomingText, time: getThaiTime() };
                     await sendTelegramMessage(`💬 <b>[LINE] ข้อความใหม่จาก [${custName}]:</b>\n${incomingText}`);
 
-                    let today = getThaiDate();
                     if (!db[userId]) db[userId] = {};
                     if (!db[userId][today]) db[userId][today] = [];
 
                     if (incomingText.startsWith('.')) {
-                        let amount = parseFloat(incomingText.replace(/^\.+/, ''));
+                        let amount = parseFloat(incomingText.replace(/^\s*\.\s*/, '').replace(/^\.+/, ''));
                         if (!isNaN(amount)) {
                             let timeNow = getThaiTime();
                             db[userId][today].push({ time: timeNow, amount: amount });
                             sortItemsByTime(db[userId][today]);
                             await saveToGitHub();
-
                             let total = db[userId][today].reduce((sum, item) => sum + item.amount, 0);
                             let listText = db[userId][today].map((item, idx) => `${idx + 1}. [${item.time}] +${item.amount}`).join('\n');
-                            let replyMessage = `📅 [${today}] รายการประจำวัน:\n${listText}\n-------------------\n💰 ยอดรวมของวัน: ${total} บาท`;
                             
+                            let replyMessage = `📅 [${today}] รายการประจำวัน:\n${listText}\n-------------------\n💰 ยอดรวมของวัน: ${total} บาท`;
                             await sendLineMessage(userId, replyMessage);
                         }
                     }
                 }
 
                 if (event.message.type === 'image') {
-                    let messageId = event.message.id;
                     recentCustomers[userId] = { lastMessage: '🖼 [LINE ส่งรูปภาพ/สลิป]', time: getThaiTime() };
                     
                     try {
@@ -661,7 +678,7 @@ app.post('/line-webhook', async (req, res) => {
                         await sendTelegramPhoto(publicImageUrl, `🖼 <b>[LINE] ลูกค้า [${custName}] ส่งรูปภาพ/สลิปมาใหม่:</b>`);
                     } catch (err) {
                         console.error("❌ ดึงรูปจาก LINE ไม่สำเร็จ:", err.response?.data || err.message);
-                        await sendTelegramMessage(`🖼 <b>[LINE] ลูกค้า [${custName}] ส่งรูปภาพ (ไม่สามารถดึงรูปแสดงได้)</b>`);
+                        await sendTelegramMessage(`🖼 <b>[LINE] ลูกค้า [${custName}] ส่งรูปภาพมา (ไม่สามารถดึงรูปแสดงได้)</b>`);
                     }
                 }
             }
@@ -672,7 +689,6 @@ app.post('/line-webhook', async (req, res) => {
 
 let lockedAdminTargetPsid = null;
 let lockExpireTimer = null;
-let mediaGroupBuffers = {}; 
 
 function setAdminLock(psid) {
     lockedAdminTargetPsid = psid;
@@ -732,96 +748,41 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
 
                 if (photo && photo.length > 0) {
                     let fileId = photo[photo.length - 1].file_id;
-                    let mediaGroupId = messageObj.media_group_id;
+                    try {
+                        let fileRes = await axios.get(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getFile?file_id=${fileId}`);
+                        let filePath = fileRes.data.result.file_path;
+                        let telegramFileUrl = `https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${filePath}`;
 
-                    if (mediaGroupId) {
-                        if (!mediaGroupBuffers[mediaGroupId]) {
-                            mediaGroupBuffers[mediaGroupId] = {
-                                targetId: lockedTargetId,
-                                custName: custName,
-                                fileIds: [],
-                                timeout: null
-                            };
+                        let imgRes = await axios.get(telegramFileUrl, { responseType: 'arraybuffer' });
+                        let base64Image = Buffer.from(imgRes.data).toString('base64');
+                        let uniqueName = `uploads/admin_${Date.now()}_${Math.random().toString(36).substring(2, 8)}.jpg`;
+
+                        await axios.put(`https://api.github.com/repos/${GITHUB_REPO}/contents/${uniqueName}`, {
+                            message: 'Upload image from Telegram admin',
+                            content: base64Image
+                        }, { headers: { Authorization: `token ${GITHUB_TOKEN}` } });
+
+                        let publicGithubUrl = `https://raw.githubusercontent.com/${GITHUB_REPO}/main/${uniqueName}`;
+
+                        console.log("⏳ กำลังรอ 10 วินาทีก่อนส่งรูป...");
+                        await sleep(10000);
+
+                        if (lockedTargetId.startsWith('U')) {
+                            await sendLineImage(lockedTargetId, publicGithubUrl);
+                            await sendTelegramMessage(`🖼 ส่งรูปภาพผ่าน GitHub หา LINE <b>${custName}</b> เรียบร้อยแล้ว!`);
+                        } else {
+                            await sendMessengerImage(lockedTargetId, publicGithubUrl);
+                            await sendTelegramMessage(`🖼 ส่งรูปภาพผ่าน GitHub หา Facebook <b>${custName}</b> เรียบร้อยแล้ว!`);
                         }
-                        
-                        mediaGroupBuffers[mediaGroupId].fileIds.push(fileId);
-
-                        clearTimeout(mediaGroupBuffers[mediaGroupId].timeout);
-                        mediaGroupBuffers[mediaGroupId].timeout = setTimeout(async () => {
-                            let groupData = mediaGroupBuffers[mediaGroupId];
-                            delete mediaGroupBuffers[mediaGroupId];
-
-                            try {
-                                let uploadedImageUrls = [];
-                                for (let fId of groupData.fileIds) {
-                                    let fileRes = await axios.get(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getFile?file_id=${fId}`);
-                                    let filePath = fileRes.data.result.file_path;
-                                    let telegramFileUrl = `https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${filePath}`;
-
-                                    let imgRes = await axios.get(telegramFileUrl, { responseType: 'arraybuffer' });
-                                    let base64Image = Buffer.from(imgRes.data).toString('base64');
-                                    let uniqueName = `uploads/admin_${Date.now()}_${Math.random().toString(36).substring(2, 8)}.jpg`;
-
-                                    await axios.put(`https://api.github.com/repos/${GITHUB_REPO}/contents/${uniqueName}`, {
-                                        message: 'Upload image from Telegram admin media group',
-                                        content: base64Image
-                                    }, { headers: { Authorization: `token ${GITHUB_TOKEN}` } });
-
-                                    let publicGithubUrl = `https://raw.githubusercontent.com/${GITHUB_REPO}/main/${uniqueName}`;
-                                    uploadedImageUrls.push(publicGithubUrl);
-                                }
-
-                                if (groupData.targetId.startsWith('U')) {
-                                    await sendLineImages(groupData.targetId, uploadedImageUrls);
-                                    await sendTelegramMessage(`🖼 ส่งอัลบั้มรูปภาพผ่าน GitHub (${uploadedImageUrls.length} รูป) หา LINE <b>${groupData.custName}</b> เรียบร้อยแล้ว!`);
-                                } else {
-                                    for (let imgUrl of uploadedImageUrls) {
-                                        await sendMessengerImage(groupData.targetId, imgUrl);
-                                    }
-                                    await sendTelegramMessage(`🖼 ส่งอัลบั้มรูปภาพผ่าน GitHub หา Facebook <b>${groupData.custName}</b> เรียบร้อยแล้ว!`);
-                                }
-                            } catch (err) {
-                                console.error("❌ อัปโหลดหรือส่งอัลบั้มรูปจาก Telegram ไม่สำเร็จ:", err.response?.data || err.message);
-                                await sendTelegramMessage(`❌ ส่งรูปภาพไม่สำเร็จ: ${err.message}`);
-                            }
-                        }, 1500); 
-
-                    } else {
-                        try {
-                            let fileRes = await axios.get(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getFile?file_id=${fileId}`);
-                            let filePath = fileRes.data.result.file_path;
-                            let telegramFileUrl = `https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${filePath}`;
-
-                            let imgRes = await axios.get(telegramFileUrl, { responseType: 'arraybuffer' });
-                            let base64Image = Buffer.from(imgRes.data).toString('base64');
-                            let uniqueName = `uploads/admin_${Date.now()}_${Math.random().toString(36).substring(2, 8)}.jpg`;
-
-                            await axios.put(`https://api.github.com/repos/${GITHUB_REPO}/contents/${uniqueName}`, {
-                                message: 'Upload image from Telegram admin',
-                                content: base64Image
-                            }, { headers: { Authorization: `token ${GITHUB_TOKEN}` } });
-
-                            let publicGithubUrl = `https://raw.githubusercontent.com/${GITHUB_REPO}/main/${uniqueName}`;
-
-                            await sleep(1000);
-
-                            if (lockedTargetId.startsWith('U')) {
-                                await sendLineImages(lockedTargetId, [publicGithubUrl]);
-                                await sendTelegramMessage(`🖼 ส่งรูปภาพผ่าน GitHub หา LINE <b>${custName}</b> เรียบร้อยแล้ว!`);
-                            } else {
-                                await sendMessengerImage(lockedTargetId, publicGithubUrl);
-                                await sendTelegramMessage(`🖼 ส่งรูปภาพผ่าน GitHub หา Facebook <b>${custName}</b> เรียบร้อยแล้ว!`);
-                            }
-                        } catch (err) {
-                            console.error("❌ อัปโหลดหรือส่งรูปจาก Telegram ไม่สำเร็จ:", err.response?.data || err.message);
-                            await sendTelegramMessage(`❌ ส่งรูปภาพไม่สำเร็จ: ${err.message}`);
-                        }
+                    } catch (err) {
+                        console.error("❌ อัปโหลดหรือส่งรูปจาก Telegram ไม่สำเร็จ:", err.response?.data || err.message);
+                        await sendTelegramMessage(`❌ ส่งรูปภาพไม่สำเร็จ: ${err.message}`);
                     }
                 } 
                 else if (actualText) {
                     let today = getThaiDate();
                     if (actualText.startsWith('.')) {
-                        let amount = parseFloat(actualText.replace(/^\.+/, ''));
+                        let amount = parseFloat(actualText.replace(/^\s*\.\s*/, '').replace(/^\.+/, ''));
                         if (!isNaN(amount)) {
                             if (!db[lockedTargetId]) db[lockedTargetId] = {};
                             if (!db[lockedTargetId][today]) db[lockedTargetId][today] = [];
@@ -868,7 +829,7 @@ app.get('/admin-test', async (req, res) => {
     if (!db[psid]) db[psid] = {};
     if (!db[psid][today]) db[psid][today] = [];
 
-    let amount = parseFloat(text.replace(/^\.+/, ''));
+    let amount = parseFloat(text.replace(/^\s*\.\s*/, '').replace(/^\.+/, ''));
     let replyMessage = "";
     if (!isNaN(amount)) {
         let timeNow = getThaiTime();
