@@ -17,6 +17,22 @@ const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 let db = {};
 let recentCustomers = {};
 
+// ระบบจำ messageId ป้องกันการประมวลผลหรือบวกยอดซ้ำวนลูป
+let processedMessageIds = new Set();
+
+function checkAndMarkMessageProcessed(messageId) {
+    if (!messageId) return false;
+    if (processedMessageIds.has(messageId)) {
+        return true; // ข้อความนี้เคยถูกประมวลผลไปแล้ว
+    }
+    processedMessageIds.add(messageId);
+    if (processedMessageIds.size > 1000) {
+        let firstItem = processedMessageIds.values().next().value;
+        processedMessageIds.delete(firstItem);
+    }
+    return false;
+}
+
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -536,6 +552,9 @@ app.post('/webhook', async (req, res) => {
 
             if (webhook_event.message) {
                 let msg = webhook_event.message;
+                let messageId = msg.mid;
+                if (checkAndMarkMessageProcessed(messageId)) continue;
+
                 let custName = db[senderPSID]?.name || `ID: ${senderPSID}`;
 
                 if (msg.text) {
@@ -584,6 +603,13 @@ app.post('/line-webhook', async (req, res) => {
     let body = req.body;
     if (body.events) {
         for (let event of body.events) {
+            let messageId = event.message?.id;
+            
+            // 🛑 เช็กว่าไอดีข้อความนี้เคยประมวลผลไปแล้วหรือยัง ถ้าทำแล้วข้ามทันที ไม่วนลูปซ้ำ!
+            if (checkAndMarkMessageProcessed(messageId)) {
+                continue; 
+            }
+
             if (event.type === 'message' && event.source && event.source.userId) {
                 let userId = event.source.userId;
                 let custName = db[userId]?.name || `LINE ID: ${userId.substring(0, 8)}`;
@@ -592,6 +618,26 @@ app.post('/line-webhook', async (req, res) => {
                     let incomingText = event.message.text.trim();
                     recentCustomers[userId] = { lastMessage: incomingText, time: getThaiTime() };
                     await sendTelegramMessage(`💬 <b>[LINE] ข้อความใหม่จาก [${custName}]:</b>\n${incomingText}`);
+
+                    let today = getThaiDate();
+                    if (!db[userId]) db[userId] = {};
+                    if (!db[userId][today]) db[userId][today] = [];
+
+                    if (incomingText.startsWith('.')) {
+                        let amount = parseFloat(incomingText.replace(/^\.+/, ''));
+                        if (!isNaN(amount)) {
+                            let timeNow = getThaiTime();
+                            db[userId][today].push({ time: timeNow, amount: amount });
+                            sortItemsByTime(db[userId][today]);
+                            await saveToGitHub();
+
+                            let total = db[userId][today].reduce((sum, item) => sum + item.amount, 0);
+                            let listText = db[userId][today].map((item, idx) => `${idx + 1}. [${item.time}] +${item.amount}`).join('\n');
+                            let replyMessage = `📅 [${today}] รายการประจำวัน:\n${listText}\n-------------------\n💰 ยอดรวมของวัน: ${total} บาท`;
+                            
+                            await sendLineMessage(userId, replyMessage);
+                        }
+                    }
                 }
 
                 if (event.message.type === 'image') {
