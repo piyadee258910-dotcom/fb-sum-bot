@@ -575,21 +575,12 @@ app.post('/webhook', async (req, res) => {
     }
 });
 
-// 📌 ตัวแปรป้องกันการวนลูป (Anti-Loop Flag) ชั่วคราว
-let lastProcessedLineMsgId = "";
-
 app.post('/line-webhook', async (req, res) => {
     let body = req.body;
     if (body.events) {
         for (let event of body.events) {
             if (event.type === 'message' && event.source && event.source.userId) {
                 let userId = event.source.userId;
-                let messageId = event.message.id;
-                
-                // ป้องกันการประมวลผลซ้ำหากเป็น Message ID เดิม
-                if (messageId === lastProcessedLineMsgId) continue;
-                lastProcessedLineMsgId = messageId;
-
                 let custName = db[userId]?.name || `LINE ID: ${userId.substring(0, 8)}`;
 
                 if (event.message.type === 'text') {
@@ -600,7 +591,7 @@ app.post('/line-webhook', async (req, res) => {
                     if (!db[userId]) db[userId] = {};
                     if (!db[userId][today]) db[userId][today] = [];
 
-                    // ✅ รองรับคำสั่งจุดจากแชท LINE OA โดยตรง (ไม่เด้งเบิ้ลแล้ว)
+                    // ✅ รองรับการพิมพ์คำสั่งจุดใน LINE OA โดยตรงแบบสมบูรณ์
                     if (incomingText.startsWith('.')) {
                         let amount = parseFloat(incomingText.replace(/^\.+/, ''));
                         if (!isNaN(amount)) {
@@ -617,7 +608,7 @@ app.post('/line-webhook', async (req, res) => {
                         }
                     } else {
                         // แจ้งเตือนข้อความธรรมดาเข้า Telegram
-                        await sendTelegramMessage(`💬 <b>[LINE] ข้อความใหม่จากรูป [${custName}]:</b>\n${incomingText}`);
+                        await sendTelegramMessage(`💬 <b>[LINE] ข้อความใหม่จาก [${custName}]:</b>\n${incomingText}`);
                     }
                 }
 
