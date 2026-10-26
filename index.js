@@ -853,7 +853,43 @@ app.get('/admin-test', async (req, res) => {
     }
     res.send(`✅ ดำเนินการให้ ID: ${psid} เรียบร้อย!`);
 });
+// ==========================================
+// ลิงก์กดส่งข้อความด่วนแบบฟิกข้อความอัตโนมัติ
+// ==========================================
+app.get('/send-quick', async (req, res) => {
+    let psid = req.query.id;
+    let message = req.query.msg;
 
+    if (!psid || !message) {
+        return res.send("<h3>❌ กรุณาระบุ ?id=IDลูกค้า&msg=ข้อความที่ต้องการส่ง</h3>");
+    }
+
+    try {
+        if (psid.startsWith('U')) {
+            await sendLineMessage(psid, message);
+        } else {
+            await sendMessengerMessage(psid, message);
+        }
+
+        let custName = db[psid]?.name || psid;
+        res.send(`
+            <!DOCTYPE html>
+            <html>
+            <head><meta charset="utf-8"><title>Send Success</title></head>
+            <body style="font-family: sans-serif; text-align: center; padding-top: 50px; background: #f0f2f5;">
+                <div style="background: white; padding: 30px; border-radius: 10px; max-width: 400px; margin: auto; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
+                    <h2 style="color: #28a745;">✅ ส่งข้อความสำเร็จ!</h2>
+                    <p>ส่งหา: <b>${custName}</b></p>
+                    <p style="color: #666; background: #f9f9f9; padding: 10px; border-radius: 5px;">"${message}"</p>
+                    <a href="/customer" style="display: inline-block; margin-top: 15px; background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">⬅ กลับไปหน้าจัดการลูกค้า</a>
+                </div>
+            </body>
+            </html>
+        `);
+    } catch (err) {
+        res.send(`❌ ส่งไม่สำเร็จ: ${err.message}`);
+    }
+});
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
     console.log(`Webhook server is running on port ${PORT}`);
