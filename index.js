@@ -586,30 +586,7 @@ app.post('/line-webhook', async (req, res) => {
                 if (event.message.type === 'text') {
                     let incomingText = event.message.text.trim();
                     recentCustomers[userId] = { lastMessage: incomingText, time: getThaiTime() };
-                    
-                    let today = getThaiDate();
-                    if (!db[userId]) db[userId] = {};
-                    if (!db[userId][today]) db[userId][today] = [];
-
-                    // ✅ รองรับการพิมพ์คำสั่งจุดใน LINE OA โดยตรงแบบสมบูรณ์
-                    if (incomingText.startsWith('.')) {
-                        let amount = parseFloat(incomingText.replace(/^\.+/, ''));
-                        if (!isNaN(amount)) {
-                            let timeNow = getThaiTime();
-                            db[userId][today].push({ time: timeNow, amount: amount });
-                            sortItemsByTime(db[userId][today]);
-                            await saveToGitHub();
-                            let total = db[userId][today].reduce((sum, item) => sum + item.amount, 0);
-                            let listText = db[userId][today].map((item, idx) => `${idx + 1}. [${item.time}] +${item.amount}`).join('\n');
-                            
-                            let replyMessage = `📅 [${today}] รายการประจำวัน:\n${listText}\n-------------------\n💰 ยอดรวมของวัน: ${total} บาท`;
-                            await sendLineMessage(userId, replyMessage);
-                            await sendTelegramMessage(`✅ [LINE Direct] บันทึกยอด +${amount} ให้ <b>${custName}</b> เรียบร้อย! (ยอดวันนี้: ${total} บาท)`);
-                        }
-                    } else {
-                        // แจ้งเตือนข้อความธรรมดาเข้า Telegram
-                        await sendTelegramMessage(`💬 <b>[LINE] ข้อความใหม่จาก [${custName}]:</b>\n${incomingText}`);
-                    }
+                    await sendTelegramMessage(`💬 <b>[LINE] ข้อความใหม่จาก [${custName}]:</b>\n${incomingText}`);
                 }
 
                 if (event.message.type === 'image') {
