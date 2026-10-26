@@ -15,7 +15,7 @@ const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
 // กำหนด LINE User ID ของแอดมินสำหรับพิมพ์สั่งการผ่าน LINE OA
-const ADMIN_LINE_USER_ID = process.env.ADMIN_LINE_USER_ID || "U7f546ef"; 
+const ADMIN_LINE_USER_ID = process.env.ADMIN_LINE_USER_ID || "U7f546ef914d845327ce78acf2abf299e"; 
 
 let db = {};
 let recentCustomers = {};
