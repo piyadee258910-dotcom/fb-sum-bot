@@ -462,13 +462,18 @@ app.post('/customer-action', express.json({ limit: '20mb' }), async (req, res) =
             await sendMessengerMessage(psid, reportMsg);
         }
         return res.send("เพิ่มยอดและส่งข้อความหาลูกค้าสำเร็จ!");
+    } else if (action === 'customAdd') {
+        if (!db[psid][today]) db[psid][today] = [];
+        db[psid][today].push({ time: time, amount: amount });
+        sortItemsByTime(db[psid][today]);
+        await saveToGitHub();
+        return res.send("เพิ่มยอดแบบกำหนดเวลาสำเร็จ!");
     } else if (action === 'edit') {
         if (db[psid][date] && db[psid][date][index]) {
             db[psid][date][index].amount = amount;
-            db[psid][date][index].time = timeNow;
             sortItemsByTime(db[psid][date]);
             await saveToGitHub();
-            return res.send("แก้ไขข้อมูลและอัปเดตเวลาเรียบร้อย!");
+            return res.send("แก้ไขจำนวนเงินเรียบร้อย!");
         } else { return res.status(400).send("ไม่พบรายการ"); }
     } else if (action === 'delete') {
         if (db[psid][date] && db[psid][date][index] !== undefined) {
