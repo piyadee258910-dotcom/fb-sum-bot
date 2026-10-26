@@ -14,11 +14,11 @@ const LINE_CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN;
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
-// กำหนด LINE User ID ของแอดมินสำหรับพิมพ์สั่งการผ่าน LINE OA
-const ADMIN_LINE_USER_ID = process.env.ADMIN_LINE_USER_ID || "U7f546ef914d845327ce78acf2abf299e"; 
+// ระบบตรวจจับแอดมินอัตโนมัติ (จะจดจำจาก LINE ID ของคนที่พิมพ์สั่งคำสั่งจุดครั้งแรก หรือดึงจาก Env)
+let ADMIN_LINE_USER_ID = process.env.ADMIN_LINE_USER_ID || null;
 
 let db = {};
-let recentCustomers = {};
+let recentCustomers = {}; 
 
 // เก็บรายการ messageId ของ LINE ที่เคยประมวลผลไปแล้ว เพื่อป้องกันการดึงมาวนซ้ำ
 let processedLineMessageIds = new Set();
@@ -199,6 +199,7 @@ app.get('/', (req, res) => {
 app.get('/admin', (req, res) => {
     let customerListHTML = '';
     for (let psid in recentCustomers) {
+        if (psid === 'latestLineCustomerId') continue;
         let cust = recentCustomers[psid];
         customerListHTML += `
             <div style="background: #fff; padding: 15px; margin-bottom: 12px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); display: flex; justify-content: space-between; align-items: center;">
@@ -523,9 +524,6 @@ app.post('/customer-action', express.json({ limit: '20mb' }), async (req, res) =
     }
 });
 
-// ==========================================
-// Facebook Webhook (/webhook)
-// ==========================================
 app.post('/webhook', async (req, res) => {
     let body = req.body;
     if (body.object === 'page') {
@@ -582,7 +580,7 @@ app.post('/webhook', async (req, res) => {
 });
 
 // ==========================================
-// LINE Webhook (/line-webhook) - พิมพ์คำสั่งจากแอป LINE OA ได้โดยตรง
+// LINE Webhook (/line-webhook) - พร้อมระบบตรวจจับแอดมินอัตโนมัติ
 // ==========================================
 app.post('/line-webhook', async (req, res) => {
     let body = req.body;
@@ -606,20 +604,22 @@ app.post('/line-webhook', async (req, res) => {
                     let incomingText = event.message.text.trim();
                     let today = getThaiDate();
 
-                    // 🛠 [ฟีเจอร์ใหม่] เช็คว่าถ้าผู้พิมพ์คือ "แอดมิน" และข้อความขึ้นต้นด้วยจุด (. หรือ ..)
+                    // 💡 [ระบบตรวจจับแอดมินอัตโนมัติ] หากยังไม่มีค่าและมีการพิมพ์คำสั่งจุด (. หรือ ..)
+                    if (!ADMIN_LINE_USER_ID && incomingText.startsWith('.')) {
+                        ADMIN_LINE_USER_ID = userId;
+                        console.log(`🤖 ตั้งค่า ADMIN_LINE_USER_ID อัตโนมัติเป็น: ${ADMIN_LINE_USER_ID}`);
+                    }
+
+                    // 🛠 เช็คว่าถ้าผู้พิมพ์คือ "แอดมิน" และข้อความขึ้นต้นด้วยจุด (. หรือ ..) สำหรับบวกยอด
                     if (userId === ADMIN_LINE_USER_ID && incomingText.startsWith('.')) {
                         let match = incomingText.match(/\d+(\.\d+)?/);
                         let amount = match ? parseFloat(match[0]) : NaN;
-
                         if (!isNaN(amount)) {
-                            // ดึงเป้าหมายคือลูกค้ารายล่าสุดที่แอดมินกำลังคุยอยู่ด้วยในแอป LINE OA
                             let targetId = recentCustomers.latestLineCustomerId;
-
                             if (targetId) {
                                 if (!db[targetId]) db[targetId] = {};
                                 if (!db[targetId][today]) db[targetId][today] = [];
                                 let timeNow = getThaiTime();
-
                                 db[targetId][today].push({ time: timeNow, amount: amount });
                                 sortItemsByTime(db[targetId][today]);
                                 await saveToGitHub();
@@ -627,8 +627,7 @@ app.post('/line-webhook', async (req, res) => {
                                 let total = db[targetId][today].reduce((sum, item) => sum + item.amount, 0);
                                 let listText = db[targetId][today].map((item, idx) => `${idx + 1}. [${item.time}] +${item.amount}`).join('\n');
                                 let reportMsg = `📅 [${today}] รายการประจำวัน:\n${listText}\n-------------------\n💰 ยอดรวมของวัน: ${total} บาท`;
-                                
-                                // ส่งยอดอัปเดตไปให้ลูกค้าในแชทนั้นทันที
+
                                 await sendLineMessage(targetId, reportMsg);
                                 continue;
                             } else {
@@ -638,12 +637,19 @@ app.post('/line-webhook', async (req, res) => {
                         }
                     }
 
+                    // 🛠 [ฟีเจอร์ใหม่] ถ้าแอดมินพิมพ์ข้อความพูดคุยปกติจากแอป LINE OA แจ้งเตือนเข้า Telegram
+                    if (userId === ADMIN_LINE_USER_ID && !incomingText.startsWith('.')) {
+                        let targetId = recentCustomers.latestLineCustomerId;
+                        let targetCustName = targetId ? (db[targetId]?.name || `LINE ID: ${targetId.substring(0, 8)}`) : "ลูกค้า";
+                        
+                        await sendTelegramMessage(`📤 <b>[LINE Admin] ส่งข้อความหา [${targetCustName}] สำเร็จ:</b>\n"${incomingText}"`);
+                        continue;
+                    }
+
                     // 👤 ถ้าเป็นลูกค้าทั่วไปทักเข้ามา บันทึก ID เก็บไว้เป็นเป้าหมายล่าสุดของแอดมิน
                     if (userId !== ADMIN_LINE_USER_ID) {
                         recentCustomers.latestLineCustomerId = userId;
                         recentCustomers[userId] = { lastMessage: incomingText, time: getThaiTime() };
-                        
-                        // ส่งแจ้งเตือนเข้า Telegram ตามเดิม
                         await sendTelegramMessage(`💬 <b>[LINE] ข้อความใหม่จาก [${custName}]:</b>\n${incomingText}`);
                     }
                 }
@@ -652,7 +658,7 @@ app.post('/line-webhook', async (req, res) => {
                     if (userId !== ADMIN_LINE_USER_ID) {
                         recentCustomers.latestLineCustomerId = userId;
                         recentCustomers[userId] = { lastMessage: '🖼 [LINE ส่งรูปภาพ/สลิป]', time: getThaiTime() };
-                        
+
                         try {
                             let imgRes = await axios.get(`https://api-data.line.me/v2/bot/message/${messageId}/content`, {
                                 headers: { 'Authorization': `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}` },
