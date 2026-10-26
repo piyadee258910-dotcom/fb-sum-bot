@@ -234,7 +234,6 @@ app.get('/admin', (req, res) => {
                     })
                     .then(res => res.text())
                     .then(data => {
-                        // พุ่งไปหน้า /customer ทันที
                         window.location.href = '/customer';
                     })
                     .catch(err => {
@@ -400,7 +399,7 @@ app.get('/customer-grid', (req, res) => {
         <body>
             <h2>🔲 แผงควบคุมด่วนแบบตาราง (Customer Grid)</h2>
             <div class="nav-links">
-                <a href="/customer">📋 หน้าจัดการรายชื่อแบบเดิม</a>
+                <a href="/customer">📋 หน้าจัดการรายชื่อแบบย่อ/ขยาย</a>
                 <a href="/admin">⬅ กลับหน้าแอดมิน</a>
             </div>
 
@@ -444,10 +443,17 @@ app.get('/customer-grid', (req, res) => {
     `);
 });
 
+// 📋 หน้า /customer ปรับใหม่เป็นแบบการ์ดกริด คลิกที่ชื่อเพื่อกางออกดูรายละเอียดและซ่อนได้
 app.get('/customer', (req, res) => {
-    let htmlContent = '';
+    let customerCardsHTML = '';
+    let grandTotalAllDays = 0;
+    let grandTotalToday = 0;
+    let todayDateStr = getThaiDate();
+
     for (let psid in db) {
         let customerData = db[psid];
+        if (!customerData || typeof customerData !== 'object') continue;
+
         let customerName = customerData.name || "ยังไม่ได้ตั้งชื่อเล่น";
         let totalAllDays = 0;
         let detailsHTML = '';
@@ -459,78 +465,216 @@ app.get('/customer', (req, res) => {
 
             let dayTotal = items.reduce((sum, item) => sum + item.amount, 0);
             totalAllDays += dayTotal;
+            grandTotalAllDays += dayTotal;
+
+            if (date === todayDateStr) {
+                grandTotalToday += dayTotal;
+            }
 
             let itemsList = items.map((item, idx) => `
-                <li style="margin-bottom: 5px; display: flex; justify-content: space-between; align-items: center;">
-                    <span>[${item.time}] +${item.amount}</span>
+                <li style="margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; font-size: 13px;">
+                    <span>⏱ [${item.time}] &nbsp; <b>+${item.amount}</b> ฿</span>
                     <div>
-                        <button onclick="editItem('${psid}', '${date}', ${idx}, ${item.amount})" style="background: #ffc107; border: none; padding: 3px 8px; border-radius: 4px; cursor: pointer; font-size: 12px;">แก้ไข</button>
-                        <button onclick="deleteItem('${psid}', '${date}', ${idx})" style="background: #dc3545; color: white; border: none; padding: 3px 8px; border-radius: 4px; cursor: pointer; font-size: 12px; margin-left: 4px;">ลบ</button>
+                        <button onclick="editItem('${psid}', '${date}', ${idx}, ${item.amount})" style="background: #ffc107; border: none; padding: 2px 6px; border-radius: 4px; cursor: pointer; font-size: 11px;">แก้ไข</button>
+                        <button onclick="deleteItem('${psid}', '${date}', ${idx})" style="background: #dc3545; color: white; border: none; padding: 2px 6px; border-radius: 4px; cursor: pointer; font-size: 11px; margin-left: 3px;">ลบ</button>
                     </div>
                 </li>
             `).join('');
 
             detailsHTML += `
-                <div style="background: #f9f9f9; padding: 10px; margin-top: 8px; border-radius: 6px; border-left: 4px solid #007bff;">
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <strong>📅 วันที่: ${date}</strong> (ยอดวันนี้: ${dayTotal})
+                <div style="background: #f8fafc; padding: 10px; margin-top: 8px; border-radius: 6px; border-left: 4px solid #3182ce;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; font-size: 13px;">
+                        <strong>📅 ${date}</strong> (ยอด: ${dayTotal} ฿)
                         <div>
-                            <button onclick="copyDailyReport('${psid}', '${date}')" style="background: #6c757d; color: white; border: none; padding: 3px 6px; border-radius: 4px; cursor: pointer; font-size: 11px; margin-right: 4px;">📋 คัดลอกยอดวันนี้</button>
-                            <button onclick="sendReport('${psid}', 'daily', '${date}')" style="background: #17a2b8; color: white; border: none; padding: 3px 6px; border-radius: 4px; cursor: pointer; font-size: 11px; margin-right: 4px;">📤 ส่งยอดรายวัน</button>
-                            <button onclick="clearDay('${psid}', '${date}')" style="background: #ff851b; color: white; border: none; padding: 3px 6px; border-radius: 4px; cursor: pointer; font-size: 11px;">🗑 เคลียร์วันนึ้</button>
+                            <button onclick="copyDailyReport('${psid}', '${date}')" style="background: #718096; color: white; border: none; padding: 2px 5px; border-radius: 3px; cursor: pointer; font-size: 10px; margin-right: 2px;">📋 คัดลอก</button>
+                            <button onclick="sendReport('${psid}', 'daily', '${date}')" style="background: #3182ce; color: white; border: none; padding: 2px 5px; border-radius: 3px; cursor: pointer; font-size: 10px; margin-right: 2px;">📤 ส่ง</button>
+                            <button onclick="clearDay('${psid}', '${date}')" style="background: #dd6b20; color: white; border: none; padding: 2px 5px; border-radius: 3px; cursor: pointer; font-size: 10px;">🗑 เคลียร์</button>
                         </div>
                     </div>
-                    <ul style="padding-left: 20px; margin: 5px 0 0 0;">${itemsList || '<li>ไม่มีรายการ</li>'}</ul>
+                    <ul style="padding-left: 18px; margin: 5px 0 0 0;">${itemsList || '<li style="font-size:12px; color:#a0aec0;">ไม่มีรายการ</li>'}</ul>
                 </div>
             `;
         }
 
-        htmlContent += `
-            <div style="background: #fff; padding: 20px; margin-bottom: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+        customerCardsHTML += `
+            <div class="cust-card-wrapper" id="card_${psid}">
+                <div class="cust-card-header" onclick="toggleCard('${psid}')">
                     <div>
-                        <h3 style="margin: 0; color: #333;">👤 ชื่อเล่น: <span style="color: #007bff;">${customerName}</span></h3>
-                        <p style="margin: 4px 0 0 0; color: #888; font-size: 12px;">ID: ${psid}</p>
-                        <p style="margin: 5px 0 0 0; color: #666; font-size: 14px;">ยอดสะสมรวมทั้งหมด: <strong>${totalAllDays} บาท</strong></p>
+                        <div class="cust-name">👤 ${customerName}</div>
+                        <div class="cust-id">ID: ${psid}</div>
                     </div>
-                    <div>
-                        <button onclick="setName('${psid}', '${customerName === 'ยังไม่ได้ตั้งชื่อเล่น' ? '' : customerName}')" style="background: #17a2b8; color: white; border: none; padding: 8px 12px; border-radius: 5px; cursor: pointer; margin-right: 5px;">✏ ตั้งชื่อเล่น</button>
-                        <button onclick="sendReport('${psid}', 'all', '')" style="background: #6610f2; color: white; border: none; padding: 8px 12px; border-radius: 5px; cursor: pointer; margin-right: 5px;">📨 ส่งยอดทั้งหมด</button>
-                        <button onclick="addAmount('${psid}')" style="background: #28a745; color: white; border: none; padding: 8px 12px; border-radius: 5px; cursor: pointer; margin-right: 5px;">+ เพิ่มยอด</button>
-                        <button onclick="customAddAmount('${psid}')" style="background: #fd7e14; color: white; border: none; padding: 8px 12px; border-radius: 5px; cursor: pointer; margin-right: 5px;">✨ ตกแต่งยอด</button>
-                        <button onclick="clearAllCustomer('${psid}')" style="background: #343a40; color: white; border: none; padding: 8px 12px; border-radius: 5px; cursor: pointer;">🔥 ล้างทั้งหมด</button>
+                    <div style="text-align: right;">
+                        <div class="cust-total">${totalAllDays.toLocaleString()} ฿</div>
+                        <div class="toggle-icon" id="icon_${psid}">▼ คลิกเพื่อจัดการ</div>
                     </div>
                 </div>
 
-                <div style="background: #eef2f7; padding: 10px; border-radius: 6px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
-                    <input type="text" id="customMsg_${psid}" placeholder="💬 พิมพ์ข้อความอิสระ..." style="flex: 1; min-width: 200px; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px;">
-                    <button onclick="sendCustomMessage('${psid}')" style="background: #007bff; color: white; border: none; padding: 8px 14px; border-radius: 4px; cursor: pointer; font-size: 14px; white-space: nowrap;">📨 ส่งข้อความ</button>
-                </div>
+                <div class="cust-card-body" id="body_${psid}">
+                    <div class="action-btn-group">
+                        <button onclick="setName('${psid}', '${customerName === 'ยังไม่ได้ตั้งชื่อเล่น' ? '' : customerName}')" style="background: #3182ce; color: white;">✏ ตั้งชื่อ</button>
+                        <button onclick="sendReport('${psid}', 'all', '')" style="background: #805ad5; color: white;">📨 ส่งยอดทั้งหมด</button>
+                        <button onclick="addAmount('${psid}')" style="background: #38a169; color: white;">+ เพิ่มยอด</button>
+                        <button onclick="customAddAmount('${psid}')" style="background: #dd6b20; color: white;">✨ เวลา/ยอด</button>
+                        <button onclick="clearAllCustomer('${psid}')" style="background: #2d3748; color: white;">🔥 ล้างข้อมูล</button>
+                    </div>
 
-                ${detailsHTML}
+                    <div style="display: flex; gap: 6px; margin-bottom: 12px;">
+                        <input type="text" id="customMsg_${psid}" placeholder="💬 พิมพ์ข้อความอิสระ..." style="flex: 1; padding: 7px; border: 1px solid #cbd5e0; border-radius: 4px; font-size: 13px;">
+                        <button onclick="sendCustomMessage('${psid}')" style="background: #007bff; color: white; border: none; padding: 7px 12px; border-radius: 4px; cursor: pointer; font-size: 13px; white-space: nowrap;">ส่ง</button>
+                    </div>
+
+                    ${detailsHTML || '<p style="color: #a0aec0; font-size: 13px; text-align: center; margin: 10px 0;">ยังไม่มีรายการในประวัติ</p>'}
+                </div>
             </div>
         `;
     }
 
-    if (Object.keys(db).length === 0) {
-        htmlContent = '<p style="text-align: center; color: #666; padding: 40px;">ยังไม่มีข้อมูลประวัติการทำรายการในระบบครับ</p>';
+    if (!customerCardsHTML) {
+        customerCardsHTML = '<p style="text-align: center; color: #718096; padding: 40px; grid-column: 1/-1;">ยังไม่มีข้อมูลประวัติการทำรายการในระบบ</p>';
     }
 
     res.send(`
         <!DOCTYPE html>
-        <html>
-        <head><meta charset="utf-8"><title>Customer Management - /customer</title></head>
-        <body style="font-family: sans-serif; background: #f0f2f5; padding: 20px; max-width: 800px; margin: auto;">
+        <html lang="th">
+        <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Customer Management Grid</title>
+            <style>
+                * { box-sizing: border-box; }
+                body {
+                    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                    background: #f0f2f5;
+                    margin: 0;
+                    padding: 20px;
+                }
+                h2 { color: #2d3748; margin-bottom: 5px; }
+                .nav-links { margin-bottom: 15px; }
+                .nav-links a {
+                    color: #007bff;
+                    text-decoration: none;
+                    font-weight: bold;
+                    margin-right: 15px;
+                }
+                .nav-links a:hover { text-decoration: underline; }
+
+                .summary-box {
+                    display: flex;
+                    gap: 15px;
+                    margin-bottom: 20px;
+                    flex-wrap: wrap;
+                }
+                .summary-card {
+                    background: #ffffff;
+                    border: 1px solid #cbd5e0;
+                    border-radius: 10px;
+                    padding: 15px 20px;
+                    flex: 1;
+                    min-width: 220px;
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+                }
+                .summary-title { font-size: 13px; color: #718096; margin-bottom: 5px; }
+                .summary-value { font-size: 22px; font-weight: bold; color: #2d3748; }
+                .summary-value.today { color: #3182ce; }
+                .summary-value.all { color: #38a169; }
+
+                /* Grid Layout สำหรับหน้า /customer */
+                .customer-grid {
+                    display: grid;
+                    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+                    gap: 15px;
+                    align-items: start;
+                }
+
+                .cust-card-wrapper {
+                    background: #ffffff;
+                    border: 2px solid #e2e8f0;
+                    border-radius: 12px;
+                    box-shadow: 0 2px 5px rgba(0,0,0,0.02);
+                    overflow: hidden;
+                    transition: border-color 0.2s;
+                }
+                .cust-card-wrapper:hover { border-color: #cbd5e0; }
+
+                .cust-card-header {
+                    padding: 15px;
+                    background: #fff;
+                    cursor: pointer;
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    user-select: none;
+                }
+                .cust-name { font-size: 16px; font-weight: bold; color: #2d3748; }
+                .cust-id { font-size: 11px; color: #a0aec0; margin-top: 2px; }
+                .cust-total { font-size: 16px; font-weight: bold; color: #38a169; }
+                .toggle-icon { font-size: 11px; color: #3182ce; margin-top: 4px; font-weight: 600; }
+
+                /* ส่วนเนื้อหาซ่อน/แสดง (Collapsible) */
+                .cust-card-body {
+                    display: none;
+                    padding: 15px;
+                    background: #fdfdfd;
+                    border-top: 1px solid #edf2f7;
+                }
+
+                .action-btn-group {
+                    display: flex;
+                    gap: 5px;
+                    flex-wrap: wrap;
+                    margin-bottom: 12px;
+                }
+                .action-btn-group button {
+                    border: none;
+                    padding: 6px 10px;
+                    border-radius: 4px;
+                    cursor: pointer;
+                    font-size: 12px;
+                    font-weight: 600;
+                    flex: 1;
+                    min-width: 75px;
+                }
+                .action-btn-group button:hover { opacity: 0.9; }
+            </style>
+        </head>
+        <body>
             <h2>📋 ระบบจัดการข้อมูลลูกค้าและรายการทั้งหมด (/customer)</h2>
-            <p>
-                <a href="/customer-grid" style="color: #28a745; font-weight: bold; text-decoration: none; margin-right: 15px;">🔲 เปิดหน้าตารางด่วน (/customer-grid)</a>
-                <a href="/admin" style="color: #007bff; font-weight: bold; text-decoration: none;">⬅ กลับไปหน้าแอดมิน</a>
-            </p>
-            <hr style="margin-bottom: 20px; border: 0; border-top: 1px solid #ccc;">
-            ${htmlContent}
+            <div class="nav-links">
+                <a href="/customer-grid">🔲 หน้าตารางด่วนปุ่มสี่เหลี่ยม (/customer-grid)</a>
+                <a href="/admin">⬅ กลับหน้าแอดมิน</a>
+            </div>
+
+            <div class="summary-box">
+                <div class="summary-card">
+                    <div class="summary-title">📅 ยอดรวมของทุกคน (วันนี้: ${todayDateStr})</div>
+                    <div class="summary-value today">${grandTotalToday.toLocaleString()} ฿</div>
+                </div>
+                <div class="summary-card">
+                    <div class="summary-title">💰 ยอดสะสมรวมทั้งหมดทุกวัน</div>
+                    <div class="summary-value all">${grandTotalAllDays.toLocaleString()} ฿</div>
+                </div>
+            </div>
+
+            <div class="customer-grid">
+                ${customerCardsHTML}
+            </div>
+
             <script>
+                // ฟังก์ชันเปิด/ปิด (ย่อ/ขยาย) กล่องข้อมูลลูกค้าแต่ละคน
+                function toggleCard(psid) {
+                    let body = document.getElementById('body_' + psid);
+                    let icon = document.getElementById('icon_' + psid);
+                    if (body.style.display === 'block') {
+                        body.style.display = 'none';
+                        icon.innerHTML = '▼ คลิกเพื่อจัดการ';
+                    } else {
+                        body.style.display = 'block';
+                        icon.innerHTML = '▲ ซ่อนการจัดการ';
+                    }
+                }
+
                 function setName(psid, currentName) {
-                    let name = prompt("กรอกชื่อเล่นของลูกค้า:", currentName === 'ยังไม่ได้ตั้งชื่อเล่น' ? '' : currentName);
+                    let name = prompt("กรอกชื่อเล่นของลูกค้า:", currentName);
                     if (name !== null) {
                         fetch('/customer-action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'setName', psid, name }) })
                         .then(res => res.text()).then(data => { alert(data); location.reload(); });
@@ -641,7 +785,6 @@ app.post('/customer-action', express.json({ limit: '20mb' }), async (req, res) =
     let timeNow = getThaiTime();
 
     if (action === 'addPartner') {
-        // เพิ่มพาร์ทเนอร์ลงใน db โดยไม่ต้องมียอดเริ่มต้นก็ได้ (สร้างโครงสร้างพื้นฐานไว้)
         if (!db[psid]) db[psid] = {};
         await saveToGitHub();
         return res.send("เพิ่มพาร์ทเนอร์สำเร็จ!");
