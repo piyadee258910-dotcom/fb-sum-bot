@@ -250,7 +250,7 @@ app.get('/customer-grid', (req, res) => {
                 }
             }
 
-            // ใช้ฟังก์ชัน addAmount เดียวกับหน้า /customer
+            // ส่งแค่ psid ไปทำงานเหมือนหน้า /customer ปกติ เพื่อความเสถียรสูงสุด
             gridCardsHTML += `
                 <div class="customer-card" onclick="addAmount('${psid}')">
                     <div class="cust-name">${custName}</div>
@@ -357,7 +357,7 @@ app.get('/customer-grid', (req, res) => {
             </div>
 
             <script>
-                // ใช้ฟังก์ชันเพิ่มยอดตัวเดียวกับหน้า /customer เพื่อความเสถียรสูงสุด
+                // ใช้ฟังก์ชัน addAmount มาตรฐานเดียวกันกับหน้า /customer
                 function addAmount(psid) {
                     let amount = prompt("กรอกจำนวนเงินที่ต้องการเพิ่ม:");
                     if (amount && !isNaN(amount)) {
@@ -381,7 +381,7 @@ app.get('/customer-grid', (req, res) => {
         </html>
     `);
 });
-// 📋 หน้าเดิม: จัดการข้อมูลและรายการทั้งหมดทำงานได้สมบูรณ์เช่นเดิม
+
 app.get('/customer', (req, res) => {
     let htmlContent = '';
     for (let psid in db) {
@@ -613,7 +613,7 @@ app.post('/customer-action', express.json({ limit: '20mb' }), async (req, res) =
         if (psid.startsWith('U')) {
             await sendLineMessage(psid, reportMsg);
         } else {
-            await sendMessengerMessage(senderPSID || psid, reportMsg);
+            await sendMessengerMessage(psid, reportMsg);
         }
         return res.send("เพิ่มยอดและส่งข้อความหาลูกค้าสำเร็จ!");
     } else if (action === 'customAdd') {
