@@ -524,7 +524,7 @@ app.post('/customer-action', express.json({ limit: '20mb' }), async (req, res) =
 });
 
 // ==========================================
-// ส่วนของ Facebook Webhook (/webhook) - ลูกค้าพิมพ์ . หรือ .. เพื่อเพิ่มยอดได้ตามปกติ
+// Facebook Webhook (/webhook)
 // ==========================================
 app.post('/webhook', async (req, res) => {
     let body = req.body;
@@ -582,7 +582,7 @@ app.post('/webhook', async (req, res) => {
 });
 
 // ==========================================
-// ส่วนของ LINE Webhook (/line-webhook) - ฉบับแก้ไขให้รับคำสั่งแอดมินชัวร์ๆ
+// LINE Webhook (/line-webhook) - พิมพ์คำสั่งจากแอป LINE OA ได้โดยตรง
 // ==========================================
 app.post('/line-webhook', async (req, res) => {
     let body = req.body;
@@ -592,12 +592,9 @@ app.post('/line-webhook', async (req, res) => {
                 let userId = event.source.userId;
                 let messageId = event.message.id;
 
-                // 🛡 ตรวจสอบ messageId ป้องกันการดึงวนซ้ำ
-                if (processedLineMessageIds.has(messageId)) {
-                    continue;
-                }
+                // 🛡 ป้องกันข้อความวนซ้ำ (Deduplication)
+                if (processedLineMessageIds.has(messageId)) continue;
                 processedLineMessageIds.add(messageId);
-
                 if (processedLineMessageIds.size > 500) {
                     let firstItem = processedLineMessageIds.values().next().value;
                     processedLineMessageIds.delete(firstItem);
@@ -608,20 +605,16 @@ app.post('/line-webhook', async (req, res) => {
                 if (event.message.type === 'text') {
                     let incomingText = event.message.text.trim();
                     let today = getThaiDate();
-                    
-                    // 🛠 [จุดที่แก้ไข] เช็คให้ชัดเจนว่าเป็นแอดมินหรือไม่ 
-                    // (แนะนำให้เช็คทั้งจากตัวแปร ADMIN_LINE_USER_ID หรือถ้าอยากให้ชัวร์ ลองเช็คข้อความที่ขึ้นต้นด้วย . หรือ .. ดูก่อนได้ครับ)
-                    let isAdminCommand = (userId === ADMIN_LINE_USER_ID) || (incomingText.startsWith('.') || incomingText.includes('.'));
 
-                    if (isAdminCommand && (incomingText.startsWith('.') || incomingText.includes('.'))) {
-                        // ดึงตัวเลขออกมาจากข้อความ (รองรับทั้ง .100 และ ..100)
+                    // 🛠 [ฟีเจอร์ใหม่] เช็คว่าถ้าผู้พิมพ์คือ "แอดมิน" และข้อความขึ้นต้นด้วยจุด (. หรือ ..)
+                    if (userId === ADMIN_LINE_USER_ID && incomingText.startsWith('.')) {
                         let match = incomingText.match(/\d+(\.\d+)?/);
                         let amount = match ? parseFloat(match[0]) : NaN;
 
                         if (!isNaN(amount)) {
-                            // ดึงเป้าหมายลูกค้าล่าสุด
-                            let targetId = lockedAdminTargetPsid || Object.keys(recentCustomers)[Object.keys(recentCustomers).length - 1];
-                            
+                            // ดึงเป้าหมายคือลูกค้ารายล่าสุดที่แอดมินกำลังคุยอยู่ด้วยในแอป LINE OA
+                            let targetId = recentCustomers.latestLineCustomerId;
+
                             if (targetId) {
                                 if (!db[targetId]) db[targetId] = {};
                                 if (!db[targetId][today]) db[targetId][today] = [];
@@ -635,49 +628,50 @@ app.post('/line-webhook', async (req, res) => {
                                 let listText = db[targetId][today].map((item, idx) => `${idx + 1}. [${item.time}] +${item.amount}`).join('\n');
                                 let reportMsg = `📅 [${today}] รายการประจำวัน:\n${listText}\n-------------------\n💰 ยอดรวมของวัน: ${total} บาท`;
                                 
-                                if (targetId.startsWith('U')) {
-                                    await sendLineMessage(targetId, reportMsg);
-                                } else {
-                                    await sendMessengerMessage(targetId, reportMsg);
-                                }
-                                
-                                let targetCustName = db[targetId]?.name || targetId;
-                                await sendLineMessage(userId, `✅ บันทึกยอด +${amount} ให้ [${targetCustName}] สำเร็จ! (ยอดวันนี้: ${total} บาท)`);
+                                // ส่งยอดอัปเดตไปให้ลูกค้าในแชทนั้นทันที
+                                await sendLineMessage(targetId, reportMsg);
                                 continue;
                             } else {
-                                await sendLineMessage(userId, `❌ ไม่พบเป้าหมายลูกค้าในระบบ กรุณารอให้ลูกค้าทักมาก่อนครับ`);
+                                await sendLineMessage(userId, `❌ ยังไม่มีลูกค้ารายล่าสุดทักเข้ามาในแชทครับ`);
                                 continue;
                             }
                         }
                     }
 
-                    // 👤 กรณีเป็นข้อความพูดคุยปกติของลูกค้า
-                    recentCustomers[userId] = { lastMessage: incomingText, time: getThaiTime() };
-                    await sendTelegramMessage(`💬 <b>[LINE] ข้อความใหม่จาก [${custName}]:</b>\n${incomingText}`);
-
+                    // 👤 ถ้าเป็นลูกค้าทั่วไปทักเข้ามา บันทึก ID เก็บไว้เป็นเป้าหมายล่าสุดของแอดมิน
+                    if (userId !== ADMIN_LINE_USER_ID) {
+                        recentCustomers.latestLineCustomerId = userId;
+                        recentCustomers[userId] = { lastMessage: incomingText, time: getThaiTime() };
+                        
+                        // ส่งแจ้งเตือนเข้า Telegram ตามเดิม
+                        await sendTelegramMessage(`💬 <b>[LINE] ข้อความใหม่จาก [${custName}]:</b>\n${incomingText}`);
+                    }
                 }
 
                 if (event.message.type === 'image') {
-                    recentCustomers[userId] = { lastMessage: '🖼 [LINE ส่งรูปภาพ/สลิป]', time: getThaiTime() };
-                    
-                    try {
-                        let imgRes = await axios.get(`https://api-data.line.me/v2/bot/message/${messageId}/content`, {
-                            headers: { 'Authorization': `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}` },
-                            responseType: 'arraybuffer'
-                        });
-                        let base64Image = Buffer.from(imgRes.data).toString('base64');
-                        let uniqueName = `uploads/line_${Date.now()}_${Math.random().toString(36).substring(2, 8)}.jpg`;
+                    if (userId !== ADMIN_LINE_USER_ID) {
+                        recentCustomers.latestLineCustomerId = userId;
+                        recentCustomers[userId] = { lastMessage: '🖼 [LINE ส่งรูปภาพ/สลิป]', time: getThaiTime() };
+                        
+                        try {
+                            let imgRes = await axios.get(`https://api-data.line.me/v2/bot/message/${messageId}/content`, {
+                                headers: { 'Authorization': `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}` },
+                                responseType: 'arraybuffer'
+                            });
+                            let base64Image = Buffer.from(imgRes.data).toString('base64');
+                            let uniqueName = `uploads/line_${Date.now()}_${Math.random().toString(36).substring(2, 8)}.jpg`;
 
-                        await axios.put(`https://api.github.com/repos/${GITHUB_REPO}/contents/${uniqueName}`, {
-                            message: 'Upload image from LINE bot',
-                            content: base64Image
-                        }, { headers: { Authorization: `token ${GITHUB_TOKEN}` } });
+                            await axios.put(`https://api.github.com/repos/${GITHUB_REPO}/contents/${uniqueName}`, {
+                                message: 'Upload image from LINE bot',
+                                content: base64Image
+                            }, { headers: { Authorization: `token ${GITHUB_TOKEN}` } });
 
-                        let publicImageUrl = `https://raw.githubusercontent.com/${GITHUB_REPO}/main/${uniqueName}`;
-                        await sendTelegramPhoto(publicImageUrl, `🖼 <b>[LINE] ลูกค้า [${custName}] ส่งรูปภาพ/สลิปมาใหม่:</b>`);
-                    } catch (err) {
-                        console.error("❌ ดึงรูปจาก LINE ไม่สำเร็จ:", err.response?.data || err.message);
-                        await sendTelegramMessage(`🖼 <b>[LINE] ลูกค้า [${custName}] ส่งรูปภาพมา (ไม่สามารถดึงรูปแสดงได้)</b>`);
+                            let publicImageUrl = `https://raw.githubusercontent.com/${GITHUB_REPO}/main/${uniqueName}`;
+                            await sendTelegramPhoto(publicImageUrl, `🖼 <b>[LINE] ลูกค้า [${custName}] ส่งรูปภาพ/สลิปมาใหม่:</b>`);
+                        } catch (err) {
+                            console.error("❌ ดึงรูปจาก LINE ไม่สำเร็จ:", err.response?.data || err.message);
+                            await sendTelegramMessage(`🖼 <b>[LINE] ลูกค้า [${custName}] ส่งรูปภาพมา</b>`);
+                        }
                     }
                 }
             }
@@ -685,6 +679,10 @@ app.post('/line-webhook', async (req, res) => {
     }
     res.status(200).send('OK');
 });
+
+// ==========================================
+// Telegram Webhook (/telegram-webhook)
+// ==========================================
 let lockedAdminTargetPsid = null;
 let lockExpireTimer = null;
 
