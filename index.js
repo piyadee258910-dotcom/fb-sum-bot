@@ -592,6 +592,7 @@ app.post('/line-webhook', async (req, res) => {
                     if (!db[userId]) db[userId] = {};
                     if (!db[userId][today]) db[userId][today] = [];
 
+                    // 📌 รองรับคำสั่งจุดใน LINE OA ตรงนี้แล้ว (ไม่ว่าจะพิมพ์สั่งเองหรือลูกค้าพิมพ์)
                     if (incomingText.startsWith('.')) {
                         let amount = parseFloat(incomingText.replace(/^\.+/, ''));
                         if (!isNaN(amount)) {
@@ -604,6 +605,7 @@ app.post('/line-webhook', async (req, res) => {
                             
                             let replyMessage = `📅 [${today}] รายการประจำวัน:\n${listText}\n-------------------\n💰 ยอดรวมของวัน: ${total} บาท`;
                             await sendLineMessage(userId, replyMessage);
+                            await sendTelegramMessage(`✅ [LINE Auto] บันทึกยอด +${amount} ให้ <b>${custName}</b> เรียบร้อย! (ยอดวันนี้: ${total} บาท)`);
                         }
                     }
                 }
@@ -640,7 +642,7 @@ app.post('/line-webhook', async (req, res) => {
 
 let lockedAdminTargetPsid = null;
 let lockExpireTimer = null;
-let mediaGroupBuffers = {}; // 📌 ตัวแปรเก็บบัฟเฟอร์รวมรูป (Media Group)
+let mediaGroupBuffers = {}; 
 
 function setAdminLock(psid) {
     lockedAdminTargetPsid = psid;
@@ -702,7 +704,6 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
                     let fileId = photo[photo.length - 1].file_id;
                     let mediaGroupId = messageObj.media_group_id;
 
-                    // 📌 ถ้าส่งมาเป็นอัลบั้ม (มี media_group_id) ให้ใช้ระบบ Buffer หน่วงเวลาเพื่อรวมรูป
                     if (mediaGroupId) {
                         if (!mediaGroupBuffers[mediaGroupId]) {
                             mediaGroupBuffers[mediaGroupId] = {
@@ -715,7 +716,6 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
                         
                         mediaGroupBuffers[mediaGroupId].fileIds.push(fileId);
 
-                        // เคลียร์ Timer เก่าแล้วตั้งเวลาใหม่ (รอให้รูปส่งมาครบทุกรูปในอัลบั้ม ภายใน 1.5 วินาที)
                         clearTimeout(mediaGroupBuffers[mediaGroupId].timeout);
                         mediaGroupBuffers[mediaGroupId].timeout = setTimeout(async () => {
                             let groupData = mediaGroupBuffers[mediaGroupId];
@@ -754,10 +754,9 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
                                 console.error("❌ อัปโหลดหรือส่งอัลบั้มรูปจาก Telegram ไม่สำเร็จ:", err.response?.data || err.message);
                                 await sendTelegramMessage(`❌ ส่งรูปภาพไม่สำเร็จ: ${err.message}`);
                             }
-                        }, 1500); // หน่วงเวลา 1.5 วินาทีเพื่อให้ Telegram ส่งครบทุกรูปในกลุ่ม
+                        }, 1500); 
 
                     } else {
-                        // กรณีส่งรูปเดี่ยวตามปกติ
                         try {
                             let fileRes = await axios.get(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getFile?file_id=${fileId}`);
                             let filePath = fileRes.data.result.file_path;
