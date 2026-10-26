@@ -575,19 +575,50 @@ app.post('/webhook', async (req, res) => {
     }
 });
 
+// 📌 ตัวแปรป้องกันการวนลูป (Anti-Loop Flag) ชั่วคราว
+let lastProcessedLineMsgId = "";
+
 app.post('/line-webhook', async (req, res) => {
     let body = req.body;
     if (body.events) {
         for (let event of body.events) {
             if (event.type === 'message' && event.source && event.source.userId) {
                 let userId = event.source.userId;
+                let messageId = event.message.id;
+                
+                // ป้องกันการประมวลผลซ้ำหากเป็น Message ID เดิม
+                if (messageId === lastProcessedLineMsgId) continue;
+                lastProcessedLineMsgId = messageId;
+
                 let custName = db[userId]?.name || `LINE ID: ${userId.substring(0, 8)}`;
 
                 if (event.message.type === 'text') {
                     let incomingText = event.message.text.trim();
                     recentCustomers[userId] = { lastMessage: incomingText, time: getThaiTime() };
-                    // 📌 LINE Webhook ทำหน้าที่แจ้งเตือนเข้า Telegram อย่างเดียวเมื่อลูกค้าพิมพ์มาปกติ
-                    await sendTelegramMessage(`💬 <b>[LINE] ข้อความใหม่จาก [${custName}]:</b>\n${incomingText}`);
+                    
+                    let today = getThaiDate();
+                    if (!db[userId]) db[userId] = {};
+                    if (!db[userId][today]) db[userId][today] = [];
+
+                    // ✅ รองรับคำสั่งจุดจากแชท LINE OA โดยตรง (ไม่เด้งเบิ้ลแล้ว)
+                    if (incomingText.startsWith('.')) {
+                        let amount = parseFloat(incomingText.replace(/^\.+/, ''));
+                        if (!isNaN(amount)) {
+                            let timeNow = getThaiTime();
+                            db[userId][today].push({ time: timeNow, amount: amount });
+                            sortItemsByTime(db[userId][today]);
+                            await saveToGitHub();
+                            let total = db[userId][today].reduce((sum, item) => sum + item.amount, 0);
+                            let listText = db[userId][today].map((item, idx) => `${idx + 1}. [${item.time}] +${item.amount}`).join('\n');
+                            
+                            let replyMessage = `📅 [${today}] รายการประจำวัน:\n${listText}\n-------------------\n💰 ยอดรวมของวัน: ${total} บาท`;
+                            await sendLineMessage(userId, replyMessage);
+                            await sendTelegramMessage(`✅ [LINE Direct] บันทึกยอด +${amount} ให้ <b>${custName}</b> เรียบร้อย! (ยอดวันนี้: ${total} บาท)`);
+                        }
+                    } else {
+                        // แจ้งเตือนข้อความธรรมดาเข้า Telegram
+                        await sendTelegramMessage(`💬 <b>[LINE] ข้อความใหม่จากรูป [${custName}]:</b>\n${incomingText}`);
+                    }
                 }
 
                 if (event.message.type === 'image') {
