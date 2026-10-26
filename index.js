@@ -586,28 +586,8 @@ app.post('/line-webhook', async (req, res) => {
                 if (event.message.type === 'text') {
                     let incomingText = event.message.text.trim();
                     recentCustomers[userId] = { lastMessage: incomingText, time: getThaiTime() };
+                    // 📌 LINE Webhook ทำหน้าที่แจ้งเตือนเข้า Telegram อย่างเดียวเมื่อลูกค้าพิมพ์มาปกติ
                     await sendTelegramMessage(`💬 <b>[LINE] ข้อความใหม่จาก [${custName}]:</b>\n${incomingText}`);
-
-                    let today = getThaiDate();
-                    if (!db[userId]) db[userId] = {};
-                    if (!db[userId][today]) db[userId][today] = [];
-
-                    // 📌 รองรับคำสั่งจุดใน LINE OA ตรงนี้แล้ว (ไม่ว่าจะพิมพ์สั่งเองหรือลูกค้าพิมพ์)
-                    if (incomingText.startsWith('.')) {
-                        let amount = parseFloat(incomingText.replace(/^\.+/, ''));
-                        if (!isNaN(amount)) {
-                            let timeNow = getThaiTime();
-                            db[userId][today].push({ time: timeNow, amount: amount });
-                            sortItemsByTime(db[userId][today]);
-                            await saveToGitHub();
-                            let total = db[userId][today].reduce((sum, item) => sum + item.amount, 0);
-                            let listText = db[userId][today].map((item, idx) => `${idx + 1}. [${item.time}] +${item.amount}`).join('\n');
-                            
-                            let replyMessage = `📅 [${today}] รายการประจำวัน:\n${listText}\n-------------------\n💰 ยอดรวมของวัน: ${total} บาท`;
-                            await sendLineMessage(userId, replyMessage);
-                            await sendTelegramMessage(`✅ [LINE Auto] บันทึกยอด +${amount} ให้ <b>${custName}</b> เรียบร้อย! (ยอดวันนี้: ${total} บาท)`);
-                        }
-                    }
                 }
 
                 if (event.message.type === 'image') {
