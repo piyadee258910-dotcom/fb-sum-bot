@@ -14,14 +14,8 @@ const LINE_CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN;
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
-// ระบบตรวจจับแอดมินอัตโนมัติ (จะจดจำจาก LINE ID ของคนที่พิมพ์สั่งคำสั่งจุดครั้งแรก หรือดึงจาก Env)
-let ADMIN_LINE_USER_ID = process.env.ADMIN_LINE_USER_ID || null;
-
 let db = {};
-let recentCustomers = {}; 
-
-// เก็บรายการ messageId ของ LINE ที่เคยประมวลผลไปแล้ว เพื่อป้องกันการดึงมาวนซ้ำ
-let processedLineMessageIds = new Set();
+let recentCustomers = {};
 
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
@@ -199,7 +193,6 @@ app.get('/', (req, res) => {
 app.get('/admin', (req, res) => {
     let customerListHTML = '';
     for (let psid in recentCustomers) {
-        if (psid === 'latestLineCustomerId') continue;
         let cust = recentCustomers[psid];
         customerListHTML += `
             <div style="background: #fff; padding: 15px; margin-bottom: 12px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); display: flex; justify-content: space-between; align-items: center;">
@@ -547,7 +540,7 @@ app.post('/webhook', async (req, res) => {
                     if (!db[senderPSID][today]) db[senderPSID][today] = [];
 
                     if (incomingText.startsWith('.')) {
-                        let amount = parseFloat(incomingText.replace(/^\s*\.\s*/, '').replace(/^\.+/, ''));
+                        let amount = parseFloat(incomingText.replace(/^\.+/, ''));
                         if (!isNaN(amount)) {
                             let timeNow = getThaiTime();
                             db[senderPSID][today].push({ time: timeNow, amount: amount });
@@ -579,105 +572,61 @@ app.post('/webhook', async (req, res) => {
     }
 });
 
-// ==========================================
-// LINE Webhook (/line-webhook) - พร้อมระบบตรวจจับแอดมินอัตโนมัติ
-// ==========================================
 app.post('/line-webhook', async (req, res) => {
     let body = req.body;
     if (body.events) {
         for (let event of body.events) {
             if (event.type === 'message' && event.source && event.source.userId) {
                 let userId = event.source.userId;
-                let messageId = event.message.id;
-
-                // 🛡 ป้องกันข้อความวนซ้ำ (Deduplication)
-                if (processedLineMessageIds.has(messageId)) continue;
-                processedLineMessageIds.add(messageId);
-                if (processedLineMessageIds.size > 500) {
-                    let firstItem = processedLineMessageIds.values().next().value;
-                    processedLineMessageIds.delete(firstItem);
-                }
-
                 let custName = db[userId]?.name || `LINE ID: ${userId.substring(0, 8)}`;
 
                 if (event.message.type === 'text') {
                     let incomingText = event.message.text.trim();
+                    recentCustomers[userId] = { lastMessage: incomingText, time: getThaiTime() };
+                    await sendTelegramMessage(`💬 <b>[LINE] ข้อความใหม่จาก [${custName}]:</b>\n${incomingText}`);
+
                     let today = getThaiDate();
+                    if (!db[userId]) db[userId] = {};
+                    if (!db[userId][today]) db[userId][today] = [];
 
-                    // 💡 [ระบบตรวจจับแอดมินอัตโนมัติ] หากยังไม่มีค่าและมีการพิมพ์คำสั่งจุด (. หรือ ..)
-                    if (!ADMIN_LINE_USER_ID && incomingText.startsWith('.')) {
-                        ADMIN_LINE_USER_ID = userId;
-                        console.log(`🤖 ตั้งค่า ADMIN_LINE_USER_ID อัตโนมัติเป็น: ${ADMIN_LINE_USER_ID}`);
-                    }
-
-                    // 🛠 เช็คว่าถ้าผู้พิมพ์คือ "แอดมิน" และข้อความขึ้นต้นด้วยจุด (. หรือ ..) สำหรับบวกยอด
-                    if (userId === ADMIN_LINE_USER_ID && incomingText.startsWith('.')) {
-                        let match = incomingText.match(/\d+(\.\d+)?/);
-                        let amount = match ? parseFloat(match[0]) : NaN;
+                    if (incomingText.startsWith('.')) {
+                        let amount = parseFloat(incomingText.replace(/^\.+/, ''));
                         if (!isNaN(amount)) {
-                            let targetId = recentCustomers.latestLineCustomerId;
-                            if (targetId) {
-                                if (!db[targetId]) db[targetId] = {};
-                                if (!db[targetId][today]) db[targetId][today] = [];
-                                let timeNow = getThaiTime();
-                                db[targetId][today].push({ time: timeNow, amount: amount });
-                                sortItemsByTime(db[targetId][today]);
-                                await saveToGitHub();
-
-                                let total = db[targetId][today].reduce((sum, item) => sum + item.amount, 0);
-                                let listText = db[targetId][today].map((item, idx) => `${idx + 1}. [${item.time}] +${item.amount}`).join('\n');
-                                let reportMsg = `📅 [${today}] รายการประจำวัน:\n${listText}\n-------------------\n💰 ยอดรวมของวัน: ${total} บาท`;
-
-                                await sendLineMessage(targetId, reportMsg);
-                                continue;
-                            } else {
-                                await sendLineMessage(userId, `❌ ยังไม่มีลูกค้ารายล่าสุดทักเข้ามาในแชทครับ`);
-                                continue;
-                            }
+                            let timeNow = getThaiTime();
+                            db[userId][today].push({ time: timeNow, amount: amount });
+                            sortItemsByTime(db[userId][today]);
+                            await saveToGitHub();
+                            let total = db[userId][today].reduce((sum, item) => sum + item.amount, 0);
+                            let listText = db[userId][today].map((item, idx) => `${idx + 1}. [${item.time}] +${item.amount}`).join('\n');
+                            
+                            let replyMessage = `📅 [${today}] รายการประจำวัน:\n${listText}\n-------------------\n💰 ยอดรวมของวัน: ${total} บาท`;
+                            await sendLineMessage(userId, replyMessage);
                         }
-                    }
-
-                    // 🛠 [ฟีเจอร์ใหม่] ถ้าแอดมินพิมพ์ข้อความพูดคุยปกติจากแอป LINE OA แจ้งเตือนเข้า Telegram
-                    if (userId === ADMIN_LINE_USER_ID && !incomingText.startsWith('.')) {
-                        let targetId = recentCustomers.latestLineCustomerId;
-                        let targetCustName = targetId ? (db[targetId]?.name || `LINE ID: ${targetId.substring(0, 8)}`) : "ลูกค้า";
-                        
-                        await sendTelegramMessage(`📤 <b>[LINE Admin] ส่งข้อความหา [${targetCustName}] สำเร็จ:</b>\n"${incomingText}"`);
-                        continue;
-                    }
-
-                    // 👤 ถ้าเป็นลูกค้าทั่วไปทักเข้ามา บันทึก ID เก็บไว้เป็นเป้าหมายล่าสุดของแอดมิน
-                    if (userId !== ADMIN_LINE_USER_ID) {
-                        recentCustomers.latestLineCustomerId = userId;
-                        recentCustomers[userId] = { lastMessage: incomingText, time: getThaiTime() };
-                        await sendTelegramMessage(`💬 <b>[LINE] ข้อความใหม่จาก [${custName}]:</b>\n${incomingText}`);
                     }
                 }
 
                 if (event.message.type === 'image') {
-                    if (userId !== ADMIN_LINE_USER_ID) {
-                        recentCustomers.latestLineCustomerId = userId;
-                        recentCustomers[userId] = { lastMessage: '🖼 [LINE ส่งรูปภาพ/สลิป]', time: getThaiTime() };
+                    let messageId = event.message.id;
+                    recentCustomers[userId] = { lastMessage: '🖼 [LINE ส่งรูปภาพ/สลิป]', time: getThaiTime() };
+                    
+                    try {
+                        let imgRes = await axios.get(`https://api-data.line.me/v2/bot/message/${messageId}/content`, {
+                            headers: { 'Authorization': `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}` },
+                            responseType: 'arraybuffer'
+                        });
+                        let base64Image = Buffer.from(imgRes.data).toString('base64');
+                        let uniqueName = `uploads/line_${Date.now()}_${Math.random().toString(36).substring(2, 8)}.jpg`;
 
-                        try {
-                            let imgRes = await axios.get(`https://api-data.line.me/v2/bot/message/${messageId}/content`, {
-                                headers: { 'Authorization': `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}` },
-                                responseType: 'arraybuffer'
-                            });
-                            let base64Image = Buffer.from(imgRes.data).toString('base64');
-                            let uniqueName = `uploads/line_${Date.now()}_${Math.random().toString(36).substring(2, 8)}.jpg`;
+                        await axios.put(`https://api.github.com/repos/${GITHUB_REPO}/contents/${uniqueName}`, {
+                            message: 'Upload image from LINE bot',
+                            content: base64Image
+                        }, { headers: { Authorization: `token ${GITHUB_TOKEN}` } });
 
-                            await axios.put(`https://api.github.com/repos/${GITHUB_REPO}/contents/${uniqueName}`, {
-                                message: 'Upload image from LINE bot',
-                                content: base64Image
-                            }, { headers: { Authorization: `token ${GITHUB_TOKEN}` } });
-
-                            let publicImageUrl = `https://raw.githubusercontent.com/${GITHUB_REPO}/main/${uniqueName}`;
-                            await sendTelegramPhoto(publicImageUrl, `🖼 <b>[LINE] ลูกค้า [${custName}] ส่งรูปภาพ/สลิปมาใหม่:</b>`);
-                        } catch (err) {
-                            console.error("❌ ดึงรูปจาก LINE ไม่สำเร็จ:", err.response?.data || err.message);
-                            await sendTelegramMessage(`🖼 <b>[LINE] ลูกค้า [${custName}] ส่งรูปภาพมา</b>`);
-                        }
+                        let publicImageUrl = `https://raw.githubusercontent.com/${GITHUB_REPO}/main/${uniqueName}`;
+                        await sendTelegramPhoto(publicImageUrl, `🖼 <b>[LINE] ลูกค้า [${custName}] ส่งรูปภาพ/สลิปมาใหม่:</b>`);
+                    } catch (err) {
+                        console.error("❌ ดึงรูปจาก LINE ไม่สำเร็จ:", err.response?.data || err.message);
+                        await sendTelegramMessage(`🖼 <b>[LINE] ลูกค้า [${custName}] ส่งรูปภาพมา (ไม่สามารถดึงรูปแสดงได้)</b>`);
                     }
                 }
             }
@@ -686,9 +635,6 @@ app.post('/line-webhook', async (req, res) => {
     res.status(200).send('OK');
 });
 
-// ==========================================
-// Telegram Webhook (/telegram-webhook)
-// ==========================================
 let lockedAdminTargetPsid = null;
 let lockExpireTimer = null;
 
@@ -766,6 +712,7 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
 
                         let publicGithubUrl = `https://raw.githubusercontent.com/${GITHUB_REPO}/main/${uniqueName}`;
 
+                        // ⏱ หน่วงเวลา 10 วินาทีก่อนส่งรูปป้องกันโดน Facebook/LINE บล็อก
                         console.log("⏳ กำลังรอ 10 วินาทีก่อนส่งรูป...");
                         await sleep(10000);
 
@@ -784,7 +731,7 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
                 else if (actualText) {
                     let today = getThaiDate();
                     if (actualText.startsWith('.')) {
-                        let amount = parseFloat(actualText.replace(/^\s*\.\s*/, '').replace(/^\.+/, ''));
+                        let amount = parseFloat(actualText.replace(/^\.+/, ''));
                         if (!isNaN(amount)) {
                             if (!db[lockedTargetId]) db[lockedTargetId] = {};
                             if (!db[lockedTargetId][today]) db[lockedTargetId][today] = [];
@@ -831,7 +778,7 @@ app.get('/admin-test', async (req, res) => {
     if (!db[psid]) db[psid] = {};
     if (!db[psid][today]) db[psid][today] = [];
 
-    let amount = parseFloat(text.replace(/^\s*\.\s*/, '').replace(/^\.+/, ''));
+    let amount = parseFloat(text.replace(/^\.+/, ''));
     let replyMessage = "";
     if (!isNaN(amount)) {
         let timeNow = getThaiTime();
@@ -853,43 +800,7 @@ app.get('/admin-test', async (req, res) => {
     }
     res.send(`✅ ดำเนินการให้ ID: ${psid} เรียบร้อย!`);
 });
-// ==========================================
-// ลิงก์กดส่งข้อความด่วนแบบฟิกข้อความอัตโนมัติ
-// ==========================================
-app.get('/send-quick', async (req, res) => {
-    let psid = req.query.id;
-    let message = req.query.msg;
 
-    if (!psid || !message) {
-        return res.send("<h3>❌ กรุณาระบุ ?id=IDลูกค้า&msg=ข้อความที่ต้องการส่ง</h3>");
-    }
-
-    try {
-        if (psid.startsWith('U')) {
-            await sendLineMessage(psid, message);
-        } else {
-            await sendMessengerMessage(psid, message);
-        }
-
-        let custName = db[psid]?.name || psid;
-        res.send(`
-            <!DOCTYPE html>
-            <html>
-            <head><meta charset="utf-8"><title>Send Success</title></head>
-            <body style="font-family: sans-serif; text-align: center; padding-top: 50px; background: #f0f2f5;">
-                <div style="background: white; padding: 30px; border-radius: 10px; max-width: 400px; margin: auto; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
-                    <h2 style="color: #28a745;">✅ ส่งข้อความสำเร็จ!</h2>
-                    <p>ส่งหา: <b>${custName}</b></p>
-                    <p style="color: #666; background: #f9f9f9; padding: 10px; border-radius: 5px;">"${message}"</p>
-                    <a href="/customer" style="display: inline-block; margin-top: 15px; background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">⬅ กลับไปหน้าจัดการลูกค้า</a>
-                </div>
-            </body>
-            </html>
-        `);
-    } catch (err) {
-        res.send(`❌ ส่งไม่สำเร็จ: ${err.message}`);
-    }
-});
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
     console.log(`Webhook server is running on port ${PORT}`);
