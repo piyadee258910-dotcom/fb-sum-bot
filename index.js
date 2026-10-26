@@ -237,7 +237,6 @@ app.get('/customer-grid', (req, res) => {
     try {
         for (let psid in db) {
             let cust = db[psid];
-            // ข้ามถ้าไม่ใช่ Object หรือไม่มีข้อมูล
             if (!cust || typeof cust !== 'object') continue;
             
             let custName = cust.name ? String(cust.name) : "ยังไม่ตั้งชื่อ";
@@ -246,17 +245,14 @@ app.get('/customer-grid', (req, res) => {
             for (let date in cust) {
                 if (date === 'name') continue;
                 let items = cust[date];
-                // เช็คว่า items เป็น Array จริงๆ ถึงจะบวกยอด
                 if (Array.isArray(items)) {
                     totalAllDays += items.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
                 }
             }
 
-            // Safe string สำหรับใส่ใน JavaScript onclick
-            let safeName = custName.replace(/'/g, "\\'").replace(/"/g, '&quot;');
-
+            // ใช้ฟังก์ชัน addAmount เดียวกับหน้า /customer
             gridCardsHTML += `
-                <div class="customer-card" onclick="quickAddAmount('${psid}', '${safeName}')">
+                <div class="customer-card" onclick="addAmount('${psid}')">
                     <div class="cust-name">${custName}</div>
                     <div class="cust-id">${psid}</div>
                     <div class="cust-total">ยอดรวม: <span>${totalAllDays.toLocaleString()}</span> ฿</div>
@@ -361,32 +357,24 @@ app.get('/customer-grid', (req, res) => {
             </div>
 
             <script>
-                function quickAddAmount(psid, custName) {
-                    let input = prompt("เพิ่มยอดให้: [" + custName + "]\\nกรอกจำนวนเงิน (กด Enter เพื่อส่งได้ทันที):");
-                    if (!input) return;
-                    
-                    let cleanInput = input.replace(/[^0-9.]/g, '');
-                    let amount = parseFloat(cleanInput);
-                    
-                    if (isNaN(amount) || amount <= 0) {
-                        alert("❌ จำนวนเงินไม่ถูกต้อง");
-                        return;
+                // ใช้ฟังก์ชันเพิ่มยอดตัวเดียวกับหน้า /customer เพื่อความเสถียรสูงสุด
+                function addAmount(psid) {
+                    let amount = prompt("กรอกจำนวนเงินที่ต้องการเพิ่ม:");
+                    if (amount && !isNaN(amount)) {
+                        fetch('/customer-action', { 
+                            method: 'POST', 
+                            headers: { 'Content-Type': 'application/json' }, 
+                            body: JSON.stringify({ action: 'add', psid: psid, amount: parseFloat(amount) }) 
+                        })
+                        .then(res => res.text())
+                        .then(data => { 
+                            alert(data); 
+                            location.reload(); 
+                        })
+                        .catch(err => {
+                            alert("❌ เกิดข้อผิดพลาดในการเชื่อมต่อ");
+                        });
                     }
-
-                    fetch('/customer-action', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ action: 'add', psid: psid, amount: amount })
-                    })
-                    .then(res => res.text())
-                    .then(data => {
-                        alert("✅ สำเร็จ! เพิ่มยอด +" + amount + " ให้ " + custName + " เรียบร้อย");
-                        location.reload();
-                    })
-                    .catch(err => {
-                        alert("❌ เกิดข้อผิดพลาดในการเชื่อมต่อ");
-                        console.error(err);
-                    });
                 }
             </script>
         </body>
