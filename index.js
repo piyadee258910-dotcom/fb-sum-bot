@@ -165,28 +165,6 @@ async function sendLineMessage(userId, messageText) {
     }
 }
 
-async function sendLineImage(userId, imageUrl) {
-    if (!LINE_CHANNEL_ACCESS_TOKEN) return;
-    try {
-        await axios.post('https://api.line.me/v2/bot/message/push', {
-            to: userId,
-            messages: [{
-                type: 'image',
-                originalContentUrl: imageUrl,
-                previewImageUrl: imageUrl
-            }]
-        }, {
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}`
-            }
-        });
-    } catch (error) {
-        console.error("❌ Error sending LINE image:", error.response?.data || error.message);
-    }
-}
-
-// ฟังก์ชันใหม่: รองรับการส่งหลายรูปพร้อมกัน (สูงสุด 5 รูป) ใน 1 แชทบับเบิล
 async function sendLineImages(userId, imageUrls) {
     if (!LINE_CHANNEL_ACCESS_TOKEN || !imageUrls || imageUrls.length === 0) return;
     
@@ -662,6 +640,7 @@ app.post('/line-webhook', async (req, res) => {
 
 let lockedAdminTargetPsid = null;
 let lockExpireTimer = null;
+let mediaGroupBuffers = {}; // 📌 ตัวแปรเก็บบัฟเฟอร์รวมรูป (Media Group)
 
 function setAdminLock(psid) {
     lockedAdminTargetPsid = psid;
@@ -719,21 +698,67 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
             if (lockedTargetId) {
                 let custName = db[lockedTargetId]?.name || lockedTargetId;
 
-                // รองรับทั้งรูปเดี่ยวและอัลบั้มรูปภาพ (Media Group) จาก Telegram
-                let photosToProcess = [];
-                if (messageObj.media_group_id) {
-                    // กรณีส่งมาเป็นอัลบั้ม (สามารถรองรับการดึงรูปจากอาเรย์ photo ได้)
-                    if (photo && photo.length > 0) {
-                        photosToProcess.push(photo[photo.length - 1].file_id);
-                    }
-                } else if (photo && photo.length > 0) {
-                    photosToProcess.push(photo[photo.length - 1].file_id);
-                }
+                if (photo && photo.length > 0) {
+                    let fileId = photo[photo.length - 1].file_id;
+                    let mediaGroupId = messageObj.media_group_id;
 
-                if (photosToProcess.length > 0) {
-                    try {
-                        let uploadedImageUrls = [];
-                        for (let fileId of photosToProcess) {
+                    // 📌 ถ้าส่งมาเป็นอัลบั้ม (มี media_group_id) ให้ใช้ระบบ Buffer หน่วงเวลาเพื่อรวมรูป
+                    if (mediaGroupId) {
+                        if (!mediaGroupBuffers[mediaGroupId]) {
+                            mediaGroupBuffers[mediaGroupId] = {
+                                targetId: lockedTargetId,
+                                custName: custName,
+                                fileIds: [],
+                                timeout: null
+                            };
+                        }
+                        
+                        mediaGroupBuffers[mediaGroupId].fileIds.push(fileId);
+
+                        // เคลียร์ Timer เก่าแล้วตั้งเวลาใหม่ (รอให้รูปส่งมาครบทุกรูปในอัลบั้ม ภายใน 1.5 วินาที)
+                        clearTimeout(mediaGroupBuffers[mediaGroupId].timeout);
+                        mediaGroupBuffers[mediaGroupId].timeout = setTimeout(async () => {
+                            let groupData = mediaGroupBuffers[mediaGroupId];
+                            delete mediaGroupBuffers[mediaGroupId];
+
+                            try {
+                                let uploadedImageUrls = [];
+                                for (let fId of groupData.fileIds) {
+                                    let fileRes = await axios.get(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getFile?file_id=${fId}`);
+                                    let filePath = fileRes.data.result.file_path;
+                                    let telegramFileUrl = `https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${filePath}`;
+
+                                    let imgRes = await axios.get(telegramFileUrl, { responseType: 'arraybuffer' });
+                                    let base64Image = Buffer.from(imgRes.data).toString('base64');
+                                    let uniqueName = `uploads/admin_${Date.now()}_${Math.random().toString(36).substring(2, 8)}.jpg`;
+
+                                    await axios.put(`https://api.github.com/repos/${GITHUB_REPO}/contents/${uniqueName}`, {
+                                        message: 'Upload image from Telegram admin media group',
+                                        content: base64Image
+                                    }, { headers: { Authorization: `token ${GITHUB_TOKEN}` } });
+
+                                    let publicGithubUrl = `https://raw.githubusercontent.com/${GITHUB_REPO}/main/${uniqueName}`;
+                                    uploadedImageUrls.push(publicGithubUrl);
+                                }
+
+                                if (groupData.targetId.startsWith('U')) {
+                                    await sendLineImages(groupData.targetId, uploadedImageUrls);
+                                    await sendTelegramMessage(`🖼 ส่งอัลบั้มรูปภาพผ่าน GitHub (${uploadedImageUrls.length} รูป) หา LINE <b>${groupData.custName}</b> เรียบร้อยแล้ว!`);
+                                } else {
+                                    for (let imgUrl of uploadedImageUrls) {
+                                        await sendMessengerImage(groupData.targetId, imgUrl);
+                                    }
+                                    await sendTelegramMessage(`🖼 ส่งอัลบั้มรูปภาพผ่าน GitHub หา Facebook <b>${groupData.custName}</b> เรียบร้อยแล้ว!`);
+                                }
+                            } catch (err) {
+                                console.error("❌ อัปโหลดหรือส่งอัลบั้มรูปจาก Telegram ไม่สำเร็จ:", err.response?.data || err.message);
+                                await sendTelegramMessage(`❌ ส่งรูปภาพไม่สำเร็จ: ${err.message}`);
+                            }
+                        }, 1500); // หน่วงเวลา 1.5 วินาทีเพื่อให้ Telegram ส่งครบทุกรูปในกลุ่ม
+
+                    } else {
+                        // กรณีส่งรูปเดี่ยวตามปกติ
+                        try {
                             let fileRes = await axios.get(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getFile?file_id=${fileId}`);
                             let filePath = fileRes.data.result.file_path;
                             let telegramFileUrl = `https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${filePath}`;
@@ -748,26 +773,20 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
                             }, { headers: { Authorization: `token ${GITHUB_TOKEN}` } });
 
                             let publicGithubUrl = `https://raw.githubusercontent.com/${GITHUB_REPO}/main/${uniqueName}`;
-                            uploadedImageUrls.push(publicGithubUrl);
-                        }
 
-                        // ⏱ หน่วงเวลาเล็กน้อยก่อนส่ง
-                        console.log("⏳ กำลังรอส่งรูปไปยังลูกค้า...");
-                        await sleep(2000);
+                            await sleep(1000);
 
-                        if (lockedTargetId.startsWith('U')) {
-                            // เรียกใช้ฟังก์ชันส่งหลายรูปพร้อมกันเพื่อให้ออกมาเป็นก้อนเดียวใน LINE
-                            await sendLineImages(lockedTargetId, uploadedImageUrls);
-                            await sendTelegramMessage(`🖼 ส่งรูปภาพผ่าน GitHub หา LINE <b>${custName}</b> เรียบร้อยแล้ว!`);
-                        } else {
-                            for (let imgUrl of uploadedImageUrls) {
-                                await sendMessengerImage(lockedTargetId, imgUrl);
+                            if (lockedTargetId.startsWith('U')) {
+                                await sendLineImages(lockedTargetId, [publicGithubUrl]);
+                                await sendTelegramMessage(`🖼 ส่งรูปภาพผ่าน GitHub หา LINE <b>${custName}</b> เรียบร้อยแล้ว!`);
+                            } else {
+                                await sendMessengerImage(lockedTargetId, publicGithubUrl);
+                                await sendTelegramMessage(`🖼 ส่งรูปภาพผ่าน GitHub หา Facebook <b>${custName}</b> เรียบร้อยแล้ว!`);
                             }
-                            await sendTelegramMessage(`🖼 ส่งรูปภาพผ่าน GitHub หา Facebook <b>${custName}</b> เรียบร้อยแล้ว!`);
+                        } catch (err) {
+                            console.error("❌ อัปโหลดหรือส่งรูปจาก Telegram ไม่สำเร็จ:", err.response?.data || err.message);
+                            await sendTelegramMessage(`❌ ส่งรูปภาพไม่สำเร็จ: ${err.message}`);
                         }
-                    } catch (err) {
-                        console.error("❌ อัปโหลดหรือส่งรูปจาก Telegram ไม่สำเร็จ:", err.response?.data || err.message);
-                        await sendTelegramMessage(`❌ ส่งรูปภาพไม่สำเร็จ: ${err.message}`);
                     }
                 } 
                 else if (actualText) {
