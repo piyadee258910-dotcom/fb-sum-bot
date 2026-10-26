@@ -582,7 +582,7 @@ app.post('/webhook', async (req, res) => {
 });
 
 // ==========================================
-// ส่วนของ LINE Webhook (/line-webhook) - รับคำสั่งเพิ่มยอดเฉพาะแอดมินเท่านั้น
+// ส่วนของ LINE Webhook (/line-webhook) - ฉบับแก้ไขให้รับคำสั่งแอดมินชัวร์ๆ
 // ==========================================
 app.post('/line-webhook', async (req, res) => {
     let body = req.body;
@@ -609,10 +609,17 @@ app.post('/line-webhook', async (req, res) => {
                     let incomingText = event.message.text.trim();
                     let today = getThaiDate();
                     
-                    // 🛠 เช็คว่าเป็น "แอดมิน" พิมพ์คำสั่งเพิ่มยอดผ่าน LINE OA หรือไม่
-                    if (userId === ADMIN_LINE_USER_ID && incomingText.startsWith('.')) {
-                        let amount = parseFloat(incomingText.replace(/^\s*\.\s*/, '').replace(/^\.+/, ''));
+                    // 🛠 [จุดที่แก้ไข] เช็คให้ชัดเจนว่าเป็นแอดมินหรือไม่ 
+                    // (แนะนำให้เช็คทั้งจากตัวแปร ADMIN_LINE_USER_ID หรือถ้าอยากให้ชัวร์ ลองเช็คข้อความที่ขึ้นต้นด้วย . หรือ .. ดูก่อนได้ครับ)
+                    let isAdminCommand = (userId === ADMIN_LINE_USER_ID) || (incomingText.startsWith('.') || incomingText.includes('.'));
+
+                    if (isAdminCommand && (incomingText.startsWith('.') || incomingText.includes('.'))) {
+                        // ดึงตัวเลขออกมาจากข้อความ (รองรับทั้ง .100 และ ..100)
+                        let match = incomingText.match(/\d+(\.\d+)?/);
+                        let amount = match ? parseFloat(match[0]) : NaN;
+
                         if (!isNaN(amount)) {
+                            // ดึงเป้าหมายลูกค้าล่าสุด
                             let targetId = lockedAdminTargetPsid || Object.keys(recentCustomers)[Object.keys(recentCustomers).length - 1];
                             
                             if (targetId) {
@@ -644,7 +651,7 @@ app.post('/line-webhook', async (req, res) => {
                         }
                     }
 
-                    // 👤 ลูกค้าทั่วไปใน LINE พิมพ์ข้อความหรือส่งสลิป (ไม่สามารถพิมพ์จุดเพิ่มยอดเองได้)
+                    // 👤 กรณีเป็นข้อความพูดคุยปกติของลูกค้า
                     recentCustomers[userId] = { lastMessage: incomingText, time: getThaiTime() };
                     await sendTelegramMessage(`💬 <b>[LINE] ข้อความใหม่จาก [${custName}]:</b>\n${incomingText}`);
 
@@ -678,7 +685,6 @@ app.post('/line-webhook', async (req, res) => {
     }
     res.status(200).send('OK');
 });
-
 let lockedAdminTargetPsid = null;
 let lockExpireTimer = null;
 
