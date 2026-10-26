@@ -231,33 +231,43 @@ app.get('/admin', (req, res) => {
     `);
 });
 
-// 🔲 หน้าใหม่: ตารางปุ่มสี่เหลี่ยม (Customer Grid Dashboard) รองรับย่อขยายหน้าจอเต็มเสมอ กดที่ชื่อแล้วใส่ยอดกด Enter ได้เลย
 app.get('/customer-grid', (req, res) => {
     let gridCardsHTML = '';
     
-    for (let psid in db) {
-        let cust = db[psid];
-        let custName = cust.name || "ยังไม่ตั้งชื่อ";
-        
-        let totalAllDays = 0;
-        for (let date in cust) {
-            if (date === 'name') continue;
-            let items = cust[date];
-            if (Array.isArray(items)) {
-                totalAllDays += items.reduce((sum, item) => sum + item.amount, 0);
+    try {
+        for (let psid in db) {
+            let cust = db[psid];
+            // ข้ามถ้าไม่ใช่ Object หรือไม่มีข้อมูล
+            if (!cust || typeof cust !== 'object') continue;
+            
+            let custName = cust.name ? String(cust.name) : "ยังไม่ตั้งชื่อ";
+            let totalAllDays = 0;
+            
+            for (let date in cust) {
+                if (date === 'name') continue;
+                let items = cust[date];
+                // เช็คว่า items เป็น Array จริงๆ ถึงจะบวกยอด
+                if (Array.isArray(items)) {
+                    totalAllDays += items.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
+                }
             }
-        }
 
-        gridCardsHTML += `
-            <div class="customer-card" onclick="quickAddAmount('${psid}', '${custName}')">
-                <div class="cust-name">${custName}</div>
-                <div class="cust-id">${psid}</div>
-                <div class="cust-total">ยอดรวม: <span>${totalAllDays}</span> ฿</div>
-            </div>
-        `;
+            // Safe string สำหรับใส่ใน JavaScript onclick
+            let safeName = custName.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+
+            gridCardsHTML += `
+                <div class="customer-card" onclick="quickAddAmount('${psid}', '${safeName}')">
+                    <div class="cust-name">${custName}</div>
+                    <div class="cust-id">${psid}</div>
+                    <div class="cust-total">ยอดรวม: <span>${totalAllDays.toLocaleString()}</span> ฿</div>
+                </div>
+            `;
+        }
+    } catch (err) {
+        console.error("❌ Error generating grid HTML:", err);
     }
 
-    if (Object.keys(db).length === 0) {
+    if (!gridCardsHTML) {
         gridCardsHTML = '<p style="text-align: center; color: #888; grid-column: 1 / -1; font-size: 18px; padding: 40px;">ยังไม่มีข้อมูลลูกค้าในระบบ</p>';
     }
 
@@ -342,8 +352,8 @@ app.get('/customer-grid', (req, res) => {
         <body>
             <h2>🔲 แผงควบคุมด่วนแบบตาราง (Customer Grid)</h2>
             <div class="nav-links">
-                <a href="/admin">⬅ กลับหน้าแอดมิน</a>
                 <a href="/customer">📋 หน้าจัดการรายชื่อแบบเดิม</a>
+                <a href="/admin">⬅ กลับหน้าแอดมิน</a>
             </div>
             
             <div class="grid-container">
@@ -383,7 +393,6 @@ app.get('/customer-grid', (req, res) => {
         </html>
     `);
 });
-
 // 📋 หน้าเดิม: จัดการข้อมูลและรายการทั้งหมดทำงานได้สมบูรณ์เช่นเดิม
 app.get('/customer', (req, res) => {
     let htmlContent = '';
