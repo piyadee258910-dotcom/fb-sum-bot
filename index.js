@@ -195,12 +195,13 @@ app.get('/admin', (req, res) => {
     for (let psid in recentCustomers) {
         let cust = recentCustomers[psid];
         customerListHTML += `
-            <div style="background: #fff; padding: 15px; margin-bottom: 12px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); display: flex; justify-content: space-between; align-items: center;">
+            <div style="background: #fff; padding: 15px; margin-bottom: 12px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
                 <div>
                     <strong>ID/PSID:</strong> ${psid} <br>
                     <small style="color: #666;">ข้อความล่าสุด: ${cust.lastMessage || '-'}</small>
                 </div>
                 <div>
+                    <button onclick="addPartner('${psid}')" style="background: #ffc107; color: #000; border: none; padding: 8px 12px; border-radius: 5px; cursor: pointer; margin-right: 5px; font-weight: bold;">➕ เพิ่มพาร์ทเนอร์</button>
                     <button onclick="quickAction('${psid}', '..100')" style="background: #28a745; color: white; border: none; padding: 8px 12px; border-radius: 5px; cursor: pointer; margin-right: 5px;">+100</button>
                     <button onclick="quickAction('${psid}', '..500')" style="background: #007bff; color: white; border: none; padding: 8px 12px; border-radius: 5px; cursor: pointer; margin-right: 5px;">+500</button>
                     <a href="/customer" style="background: #6c757d; color: white; text-decoration: none; padding: 8px 12px; border-radius: 5px; display: inline-block;">จัดการรายชื่อ</a>
@@ -212,7 +213,7 @@ app.get('/admin', (req, res) => {
         <!DOCTYPE html>
         <html>
         <head><meta charset="utf-8"><title>Admin Quick Dashboard</title></head>
-        <body style="font-family: sans-serif; background: #f0f2f5; padding: 20px; max-width: 650px; margin: auto;">
+        <body style="font-family: sans-serif; background: #f0f2f5; padding: 20px; max-width: 750px; margin: auto;">
             <h2>🚀 แผงควบคุมด่วนแอดมิน</h2>
             <p>
                 <a href="/customer-grid" style="color: #28a745; font-weight: bold; text-decoration: none; margin-right: 15px;">🔲 เปิดหน้าตารางด่วน (/customer-grid)</a>
@@ -225,6 +226,21 @@ app.get('/admin', (req, res) => {
                     fetch('/admin-test?id=' + psid + '&text=' + encodeURIComponent(text))
                         .then(res => res.text()).then(data => { alert('สำเร็จ! ' + data); location.reload(); });
                 }
+                function addPartner(psid) {
+                    fetch('/customer-action', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ action: 'addPartner', psid: psid })
+                    })
+                    .then(res => res.text())
+                    .then(data => {
+                        // พุ่งไปหน้า /customer ทันที
+                        window.location.href = '/customer';
+                    })
+                    .catch(err => {
+                        alert("❌ เกิดข้อผิดพลาดในการเชื่อมต่อ");
+                    });
+                }
             </script>
         </body>
         </html>
@@ -233,6 +249,9 @@ app.get('/admin', (req, res) => {
 
 app.get('/customer-grid', (req, res) => {
     let gridCardsHTML = '';
+    let grandTotalAllDays = 0;
+    let grandTotalToday = 0;
+    let todayDateStr = getThaiDate();
     
     try {
         for (let psid in db) {
@@ -246,11 +265,16 @@ app.get('/customer-grid', (req, res) => {
                 if (date === 'name') continue;
                 let items = cust[date];
                 if (Array.isArray(items)) {
-                    totalAllDays += items.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
+                    let daySum = items.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
+                    totalAllDays += daySum;
+                    grandTotalAllDays += daySum;
+
+                    if (date === todayDateStr) {
+                        grandTotalToday += daySum;
+                    }
                 }
             }
 
-            // ส่งแค่ psid ไปทำงานเหมือนหน้า /customer ปกติ เพื่อความเสถียรสูงสุด
             gridCardsHTML += `
                 <div class="customer-card" onclick="addAmount('${psid}')">
                     <div class="cust-name">${custName}</div>
@@ -283,7 +307,7 @@ app.get('/customer-grid', (req, res) => {
                     padding: 20px;
                 }
                 h2 { color: #333; margin-bottom: 5px; }
-                .nav-links { margin-bottom: 20px; }
+                .nav-links { margin-bottom: 15px; }
                 .nav-links a {
                     color: #007bff;
                     text-decoration: none;
@@ -292,6 +316,34 @@ app.get('/customer-grid', (req, res) => {
                 }
                 .nav-links a:hover { text-decoration: underline; }
                 
+                .summary-box {
+                    display: flex;
+                    gap: 15px;
+                    margin-bottom: 20px;
+                    flex-wrap: wrap;
+                }
+                .summary-card {
+                    background: #ffffff;
+                    border: 1px solid #cbd5e0;
+                    border-radius: 10px;
+                    padding: 15px 20px;
+                    flex: 1;
+                    min-width: 220px;
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+                }
+                .summary-title {
+                    font-size: 13px;
+                    color: #718096;
+                    margin-bottom: 5px;
+                }
+                .summary-value {
+                    font-size: 22px;
+                    font-weight: bold;
+                    color: #2d3748;
+                }
+                .summary-value.today { color: #3182ce; }
+                .summary-value.all { color: #38a169; }
+
                 .grid-container {
                     display: grid;
                     grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
@@ -351,13 +403,23 @@ app.get('/customer-grid', (req, res) => {
                 <a href="/customer">📋 หน้าจัดการรายชื่อแบบเดิม</a>
                 <a href="/admin">⬅ กลับหน้าแอดมิน</a>
             </div>
+
+            <div class="summary-box">
+                <div class="summary-card">
+                    <div class="summary-title">📅 ยอดรวมของทุกคน (วันนี้: ${todayDateStr})</div>
+                    <div class="summary-value today">${grandTotalToday.toLocaleString()} ฿</div>
+                </div>
+                <div class="summary-card">
+                    <div class="summary-title">💰 ยอดสะสมรวมทั้งหมดทุกวัน</div>
+                    <div class="summary-value all">${grandTotalAllDays.toLocaleString()} ฿</div>
+                </div>
+            </div>
             
             <div class="grid-container">
                 ${gridCardsHTML}
             </div>
 
             <script>
-                // ใช้ฟังก์ชัน addAmount มาตรฐานเดียวกันกับหน้า /customer
                 function addAmount(psid) {
                     let amount = prompt("กรอกจำนวนเงินที่ต้องการเพิ่ม:");
                     if (amount && !isNaN(amount)) {
@@ -578,7 +640,12 @@ app.post('/customer-action', express.json({ limit: '20mb' }), async (req, res) =
     if (!db[psid]) db[psid] = {};
     let timeNow = getThaiTime();
 
-    if (action === 'setName') {
+    if (action === 'addPartner') {
+        // เพิ่มพาร์ทเนอร์ลงใน db โดยไม่ต้องมียอดเริ่มต้นก็ได้ (สร้างโครงสร้างพื้นฐานไว้)
+        if (!db[psid]) db[psid] = {};
+        await saveToGitHub();
+        return res.send("เพิ่มพาร์ทเนอร์สำเร็จ!");
+    } else if (action === 'setName') {
         db[psid].name = name;
         await saveToGitHub();
         return res.send("บันทึกชื่อเล่นสำเร็จ!");
