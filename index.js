@@ -686,7 +686,7 @@ app.get('/customer', (req, res) => {
                 function customAddAmount(psid) {
                     let input = prompt("กรอกเวลาและจำนวนเงิน (ตัวอย่าง: 17.00 200 หรือ 17:00 200):");
                     if (!input) return;
-                    let parts = input.trim().split(/\\s+/);
+                    let parts = input.trim().split(/\s+/);
                     if (parts.length < 2) { alert("กรุณากรอกรูปแบบให้ถูกต้อง เช่น 17.00 200"); return; }
                     let timeInput = parts[0].replace('.', ':');
                     let amountInput = parseFloat(parts[1]);
@@ -946,6 +946,9 @@ app.post('/line-webhook', async (req, res) => {
     let body = req.body;
     if (body.events) {
         for (let event of body.events) {
+            // ป้องกันลูปโดยการกรองไม่ให้ประมวลผลหากต้นทางส่งมาจาก ID ตัวบอทเอง
+            if (event.source && event.source.userId === "U1d63d6b1d6d3..." ) continue; // ป้องกันบอททักตัวเอง (ถ้ามี)
+            
             if (event.type === 'message' && event.source && event.source.userId) {
                 let userId = event.source.userId;
                 let custName = db[userId]?.name || `LINE ID: ${userId.substring(0, 8)}`;
@@ -976,7 +979,9 @@ app.post('/line-webhook', async (req, res) => {
                 }
 
                 if (event.message.type === 'image') {
-                    recentCustomers[userId] = { lastMessage: '🖼 [LINE ส่งรูปภาพ/สลิป]', time: getThaiTime() };
+                    // ป้องกันลูปรับภาพซ้ำซ้อนจาก Webhook
+                    if (event.message.quoteToken && recentCustomers[userId]?.lastImageId === event.message.id) continue;
+                    recentCustomers[userId] = { lastMessage: '🖼 [LINE ส่งรูปภาพ/สลิป]', lastImageId: event.message.id, time: getThaiTime() };
                     
                     try {
                         let messageId = event.message.id;
@@ -1028,6 +1033,12 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
         
         if (TELEGRAM_CHAT_ID && chatId === String(TELEGRAM_CHAT_ID)) {
             let messageObj = update.message;
+            
+            // 🛑 ป้องกันลูป: ถ้าข้อความหรือรูปภาพถูกส่งมาจากตัวบอท Telegram เอง ให้ข้ามทันที
+            if (messageObj.from && messageObj.from.is_bot) {
+                return res.status(200).send('OK');
+            }
+
             let text = messageObj.text || messageObj.caption || "";
             let photo = messageObj.photo;
 
