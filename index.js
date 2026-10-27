@@ -443,7 +443,6 @@ app.get('/customer-grid', (req, res) => {
     `);
 });
 
-// 📋 หน้า /customer ปรับใหม่เป็นแบบการ์ดกริด คลิกที่ชื่อเพื่อกางออกดูรายละเอียดและซ่อนได้
 app.get('/customer', (req, res) => {
     let customerCardsHTML = '';
     let grandTotalAllDays = 0;
@@ -578,7 +577,6 @@ app.get('/customer', (req, res) => {
                 .summary-value.today { color: #3182ce; }
                 .summary-value.all { color: #38a169; }
 
-                /* Grid Layout สำหรับหน้า /customer */
                 .customer-grid {
                     display: grid;
                     grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
@@ -610,7 +608,6 @@ app.get('/customer', (req, res) => {
                 .cust-total { font-size: 16px; font-weight: bold; color: #38a169; }
                 .toggle-icon { font-size: 11px; color: #3182ce; margin-top: 4px; font-weight: 600; }
 
-                /* ส่วนเนื้อหาซ่อน/แสดง (Collapsible) */
                 .cust-card-body {
                     display: none;
                     padding: 15px;
@@ -660,7 +657,6 @@ app.get('/customer', (req, res) => {
             </div>
 
             <script>
-                // ฟังก์ชันเปิด/ปิด (ย่อ/ขยาย) กล่องข้อมูลลูกค้าแต่ละคน
                 function toggleCard(psid) {
                     let body = document.getElementById('body_' + psid);
                     let icon = document.getElementById('icon_' + psid);
@@ -1022,6 +1018,12 @@ function setAdminLock(psid) {
 
 app.post('/telegram-webhook', express.json(), async (req, res) => {
     let update = req.body;
+    
+    // 🛑 ป้องกันลูป: ถ้าผู้ส่งใน Telegram เป็นตัวบอทเอง ให้ตัดจบการทำงานทันที
+    if (update.message && update.message.from && update.message.from.is_bot) {
+        return res.status(200).send('OK');
+    }
+
     if (update.message && update.message.chat) {
         let chatId = String(update.message.chat.id);
         
