@@ -13,7 +13,6 @@ const GITHUB_REPO = process.env.GITHUB_REPO || "piyadee258910-dotcom/fb-sum-bot"
 const LINE_CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN;
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
-const TELEGRAM_BOT_ID = process.env.TELEGRAM_BOT_ID || ""; 
 
 let db = {};
 let recentCustomers = {};
@@ -976,29 +975,10 @@ app.post('/line-webhook', async (req, res) => {
                     }
                 }
 
+                // 🛑 ปรับวิธีส่งรูปจาก LINE เข้า Telegram ให้เหมือนฝั่ง Facebook (แจ้งเตือนด้วยข้อความแจ้งรูปภาพ แทนการดึงรูปผ่าน GitHub ย้อนกลับไปมา)
                 if (event.message.type === 'image') {
-                    let messageId = event.message.id;
                     recentCustomers[userId] = { lastMessage: '🖼 [LINE ส่งรูปภาพ/สลิป]', time: getThaiTime() };
-                    
-                    try {
-                        let imgRes = await axios.get(`https://api-data.line.me/v2/bot/message/${messageId}/content`, {
-                            headers: { 'Authorization': `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}` },
-                            responseType: 'arraybuffer'
-                        });
-                        let base64Image = Buffer.from(imgRes.data).toString('base64');
-                        let uniqueName = `uploads/line_${Date.now()}_${Math.random().toString(36).substring(2, 8)}.jpg`;
-
-                        await axios.put(`https://api.github.com/repos/${GITHUB_REPO}/contents/${uniqueName}`, {
-                            message: 'Upload image from LINE bot',
-                            content: base64Image
-                        }, { headers: { Authorization: `token ${GITHUB_TOKEN}` } });
-
-                        let publicImageUrl = `https://raw.githubusercontent.com/${GITHUB_REPO}/main/${uniqueName}`;
-                        await sendTelegramPhoto(publicImageUrl, `🖼 <b>[LINE] ลูกค้า [${custName}] ส่งรูปภาพ/สลิปมาใหม่:</b>`);
-                    } catch (err) {
-                        console.error("❌ ดึงรูปจาก LINE ไม่สำเร็จ:", err.response?.data || err.message);
-                        await sendTelegramMessage(`🖼 <b>[LINE] ลูกค้า [${custName}] ส่งรูปภาพมา (ไม่สามารถดึงรูปแสดงได้)</b>`);
-                    }
+                    await sendTelegramMessage(`🖼 <b>[LINE] ลูกค้า [${custName}] ส่งรูปภาพ/สลิปมาใหม่ (ตรวจสอบสลิปได้ใน LINE OA)</b>`);
                 }
             }
         }
@@ -1019,22 +999,6 @@ function setAdminLock(psid) {
 
 app.post('/telegram-webhook', express.json(), async (req, res) => {
     let update = req.body;
-    
-    // 🛑 บล็อกข้อความที่บอทส่งออกไปเองทุกรูปแบบเพื่อป้องกันลูป
-    if (update.message) {
-        let msg = update.message;
-        if (msg.from && (msg.from.is_bot === true || String(msg.from.id) === String(TELEGRAM_BOT_ID))) {
-            return res.status(200).send('OK');
-        }
-        let captionText = msg.caption || "";
-        if (captionText.includes("ส่งรูปภาพ/สลิปมาใหม่") || captionText.includes("[LINE]") || captionText.includes("[FB]")) {
-            return res.status(200).send('OK');
-        }
-    }
-    if (update.edited_message || update.channel_post) {
-        return res.status(200).send('OK');
-    }
-
     if (update.message && update.message.chat) {
         let chatId = String(update.message.chat.id);
         
@@ -1081,6 +1045,7 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
             if (lockedTargetId) {
                 let custName = db[lockedTargetId]?.name || lockedTargetId;
 
+                // กรณีแอดมินส่งรูปจาก Telegram กลับหาลูกค้า (ผ่าน GitHub เหมือนเดิม)
                 if (photo && photo.length > 0) {
                     let fileId = photo[photo.length - 1].file_id;
                     try {
