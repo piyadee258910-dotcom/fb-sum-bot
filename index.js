@@ -942,6 +942,9 @@ app.post('/webhook', async (req, res) => {
     }
 });
 
+// ตัวแปรสำหรับบล็อกชั่วคราว ไม่ให้เทเลแกรมเว็บพุกประมวลผลรูปที่บอทส่งออกไปเอง
+let isBotSendingPhoto = false;
+
 app.post('/line-webhook', async (req, res) => {
     let body = req.body;
     if (body.events) {
@@ -993,7 +996,12 @@ app.post('/line-webhook', async (req, res) => {
                         }, { headers: { Authorization: `token ${GITHUB_TOKEN}` } });
 
                         let publicImageUrl = `https://raw.githubusercontent.com/${GITHUB_REPO}/main/${uniqueName}`;
+                        
+                        // 🛑 ตั้งค่าสถานะว่าบอทกำลังส่งรูปออกไป เพื่อป้องกันไม่ให้ Telegram Webhook วนลูปจับภาพนี้มาประมวลผลซ้ำ
+                        isBotSendingPhoto = true;
                         await sendTelegramPhoto(publicImageUrl, `🖼 <b>[LINE] ลูกค้า [${custName}] ส่งรูปภาพ/สลิปมาใหม่:</b>`);
+                        setTimeout(() => { isBotSendingPhoto = false; }, 5000); // ปลดล็อกหลังผ่านไป 5 วิ
+
                     } catch (err) {
                         console.error("❌ ดึงรูปจาก LINE ไม่สำเร็จ:", err.response?.data || err.message);
                         await sendTelegramMessage(`🖼 <b>[LINE] ลูกค้า [${custName}] ส่งรูปภาพมา (ไม่สามารถดึงรูปแสดงได้)</b>`);
@@ -1019,8 +1027,13 @@ function setAdminLock(psid) {
 app.post('/telegram-webhook', express.json(), async (req, res) => {
     let update = req.body;
     
-    // 🛑 ป้องกันลูป: ถ้าผู้ส่งใน Telegram เป็นตัวบอทเอง ให้ตัดจบการทำงานทันที
+    // 🛑 1. ป้องกันลูป: ถ้าผู้ส่งใน Telegram เป็นตัวบอทเอง ให้ตัดจบการทำงานทันที
     if (update.message && update.message.from && update.message.from.is_bot) {
+        return res.status(200).send('OK');
+    }
+
+    // 🛑 2. ป้องกันลูป: ถ้ากำลังอยู่ในช่วงที่บอทส่งรูปแจ้งเตือน (isBotSendingPhoto เป็น true) ให้ข้ามเว็บพุกนี้ไปเลย
+    if (isBotSendingPhoto && update.message && update.message.photo) {
         return res.status(200).send('OK');
     }
 
