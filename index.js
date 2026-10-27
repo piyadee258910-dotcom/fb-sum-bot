@@ -946,9 +946,6 @@ app.post('/line-webhook', async (req, res) => {
     let body = req.body;
     if (body.events) {
         for (let event of body.events) {
-            // ป้องกันลูปโดยการกรองไม่ให้ประมวลผลหากต้นทางส่งมาจาก ID ตัวบอทเอง
-            if (event.source && event.source.userId === "U1d63d6b1d6d3..." ) continue; // ป้องกันบอททักตัวเอง (ถ้ามี)
-            
             if (event.type === 'message' && event.source && event.source.userId) {
                 let userId = event.source.userId;
                 let custName = db[userId]?.name || `LINE ID: ${userId.substring(0, 8)}`;
@@ -978,35 +975,40 @@ app.post('/line-webhook', async (req, res) => {
                     }
                 }
 
+                // 🛑 โค้ดใหม่: ดึงลิงก์รูปภาพโดยตรงจาก LINE (เหมือน Facebook) ป้องกันลูป 100%
                 if (event.message.type === 'image') {
-                    // ป้องกันลูปรับภาพซ้ำซ้อนจาก Webhook
-                    if (event.message.quoteToken && recentCustomers[userId]?.lastImageId === event.message.id) continue;
-                    recentCustomers[userId] = { lastMessage: '🖼 [LINE ส่งรูปภาพ/สลิป]', lastImageId: event.message.id, time: getThaiTime() };
+                    let messageId = event.message.id;
+                    if (recentCustomers[userId]?.lastImageId === messageId) continue;
+                    
+                    recentCustomers[userId] = { lastMessage: '🖼 [LINE ส่งรูปภาพ/สลิป]', lastImageId: messageId, time: getThaiTime() };
+                    
+                    let lineImageUrl = `https://api-data.line.me/v2/bot/message/${messageId}/content`;
+                    
+                    // ส่งลิงก์รูปเข้า Telegram ผ่าน sendTelegramPhoto โดยใช้ Auth Header ผ่าน axios ในฟังก์ชันย่อย หรือส่ง URL ตรง (LINE API ต้องใช้ Token แนบ ซึ่งส่งผ่าน Proxy URL ของ LINE Content API โดยตรงไม่ได้ Telegram จะโหลดไม่ได้)
+                    // วิธีที่ถูกต้องและไม่ลูป: สร้าง Endpoint หรือดึงผ่านลิงก์ชั่วคราว หรือใช้ URL รูปภาพพรีวิวของ LINE Content แทน
                     
                     try {
-                        let messageId = event.message.id;
-                        let lineMediaRes = await axios.get(`https://api-data.line.me/v2/bot/message/${messageId}/content`, {
+                        // ส่งภาพเข้า Telegram โดยใช้ Bot API ดึงจาก LINE Content API โดยตรงผ่าน Header Authorization
+                        let lineMediaRes = await axios.get(lineImageUrl, {
                             headers: { 'Authorization': `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}` },
                             responseType: 'arraybuffer'
                         });
 
-                        let base64Image = Buffer.from(lineMediaRes.data).toString('base64');
-                        let uniqueName = `uploads/line_${Date.now()}_${Math.random().toString(36).substring(2, 8)}.jpg`;
+                        // ส่งข้อมูล Buffer รูปภาพตรงไปที่ Telegram API (sendPhoto โดยใช้ form-data)
+                        const FormData = require('form-data');
+                        let form = new FormData();
+                        form.append('chat_id', TELEGRAM_CHAT_ID);
+                        form.append('caption', `🖼 <b>[LINE] ลูกค้า [${custName}] ส่งรูปภาพ/สลิปมาใหม่:</b>`);
+                        form.append('parse_mode', 'HTML');
+                        form.append('photo', Buffer.from(lineMediaRes.data), { filename: 'slip.jpg', contentType: 'image/jpeg' });
 
-                        await axios.put(`https://api.github.com/repos/${GITHUB_REPO}/contents/${uniqueName}`, {
-                            message: 'Upload image from LINE OA',
-                            content: base64Image
-                        }, { 
-                            headers: { Authorization: `token ${GITHUB_TOKEN}` } 
+                        await axios.post(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`, form, {
+                            headers: form.getHeaders()
                         });
 
-                        let publicGithubUrl = `https://raw.githubusercontent.com/${GITHUB_REPO}/main/${uniqueName}`;
-
-                        await sendTelegramPhoto(publicGithubUrl, `🖼 <b>[LINE] ลูกค้า [${custName}] ส่งรูปภาพ/สลิปมาใหม่:</b>`);
-
                     } catch (err) {
-                        console.error("❌ ดึงรูปหรือส่งรูปจาก LINE เข้า Telegram ไม่สำเร็จ:", err.response?.data || err.message);
-                        await sendTelegramMessage(`🖼 <b>[LINE] ลูกค้า [${custName}] ส่งรูปภาพ/สลิปมาใหม่</b> (ไม่สามารถโหลดรูปภาพแสดงได้อัตโนมัติ)`);
+                        console.error("❌ ส่งรูปจาก LINE เข้า Telegram ไม่สำเร็จ:", err.response?.data || err.message);
+                        await sendTelegramMessage(`🖼 <b>[LINE] ลูกค้า [${custName}] ส่งรูปภาพ/สลิปมาใหม่</b> (ไม่สามารถแสดงภาพพรีวิวได้)`);
                     }
                 }
             }
@@ -1033,8 +1035,6 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
         
         if (TELEGRAM_CHAT_ID && chatId === String(TELEGRAM_CHAT_ID)) {
             let messageObj = update.message;
-            
-            // 🛑 ป้องกันลูป: ถ้าข้อความหรือรูปภาพถูกส่งมาจากตัวบอท Telegram เอง ให้ข้ามทันที
             if (messageObj.from && messageObj.from.is_bot) {
                 return res.status(200).send('OK');
             }
