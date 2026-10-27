@@ -14,6 +14,10 @@ const LINE_CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN;
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
+// 💡 ใส่ Telegram Bot ID ของคุณที่นี่ (สามารถดูได้จากตอนที่บอทส่งข้อความเข้าแชท หรือใช้ตัวเลขไอดีของบอทเทเลแกรมครับ)
+// ถ้าไม่แน่ใจ ระบบจะเช็คจาก is_bot ให้ด้วยอัตโนมัติ
+const TELEGRAM_BOT_ID = process.env.TELEGRAM_BOT_ID || ""; 
+
 let db = {};
 let recentCustomers = {};
 
@@ -942,9 +946,6 @@ app.post('/webhook', async (req, res) => {
     }
 });
 
-// ตัวแปรสำหรับบล็อกชั่วคราว ไม่ให้เทเลแกรมเว็บพุกประมวลผลรูปที่บอทส่งออกไปเอง
-let isBotSendingPhoto = false;
-
 app.post('/line-webhook', async (req, res) => {
     let body = req.body;
     if (body.events) {
@@ -996,12 +997,7 @@ app.post('/line-webhook', async (req, res) => {
                         }, { headers: { Authorization: `token ${GITHUB_TOKEN}` } });
 
                         let publicImageUrl = `https://raw.githubusercontent.com/${GITHUB_REPO}/main/${uniqueName}`;
-                        
-                        // 🛑 ตั้งค่าสถานะว่าบอทกำลังส่งรูปออกไป เพื่อป้องกันไม่ให้ Telegram Webhook วนลูปจับภาพนี้มาประมวลผลซ้ำ
-                        isBotSendingPhoto = true;
                         await sendTelegramPhoto(publicImageUrl, `🖼 <b>[LINE] ลูกค้า [${custName}] ส่งรูปภาพ/สลิปมาใหม่:</b>`);
-                        setTimeout(() => { isBotSendingPhoto = false; }, 5000); // ปลดล็อกหลังผ่านไป 5 วิ
-
                     } catch (err) {
                         console.error("❌ ดึงรูปจาก LINE ไม่สำเร็จ:", err.response?.data || err.message);
                         await sendTelegramMessage(`🖼 <b>[LINE] ลูกค้า [${custName}] ส่งรูปภาพมา (ไม่สามารถดึงรูปแสดงได้)</b>`);
@@ -1027,14 +1023,20 @@ function setAdminLock(psid) {
 app.post('/telegram-webhook', express.json(), async (req, res) => {
     let update = req.body;
     
-    // 🛑 1. ป้องกันลูป: ถ้าผู้ส่งใน Telegram เป็นตัวบอทเอง ให้ตัดจบการทำงานทันที
-    if (update.message && update.message.from && update.message.from.is_bot) {
-        return res.status(200).send('OK');
-    }
+    // 🛑 [จุดแก้ไขสำคัญที่สุด] บล็อกบอททุกกรณีอย่างเด็ดขาด
+    if (update.message) {
+        let msg = update.message;
+        
+        // เช็คว่าผู้ส่งคือบอทหรือไม่ (จาก is_bot หรือเทียบไอดี)
+        if (msg.from && (msg.from.is_bot === true || String(msg.from.id) === String(TELEGRAM_BOT_ID))) {
+            return res.status(200).send('OK');
+        }
 
-    // 🛑 2. ป้องกันลูป: ถ้ากำลังอยู่ในช่วงที่บอทส่งรูปแจ้งเตือน (isBotSendingPhoto เป็น true) ให้ข้ามเว็บพุกนี้ไปเลย
-    if (isBotSendingPhoto && update.message && update.message.photo) {
-        return res.status(200).send('OK');
+        // เช็คเพิ่มเติม: ถ้าแคปชันมีคำว่าแจ้งเตือนจาก LINE หรือข้อความระบบ ให้ข้ามทันที
+        let captionText = msg.caption || "";
+        if (captionText.includes("ส่งรูปภาพ/สลิปมาใหม่") || captionText.includes("[LINE]") || captionText.includes("[FB]")) {
+            return res.status(200);
+        }
     }
 
     if (update.message && update.message.chat) {
