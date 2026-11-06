@@ -290,6 +290,10 @@
       {
         "time": "20:23",
         "amount": 60
+      },
+      {
+        "time": "20:25",
+        "amount": 120
       }
     ],
     "name": "sukit"
