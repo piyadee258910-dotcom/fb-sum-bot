@@ -418,7 +418,7 @@ app.get('/customer-grid', (req, res) => {
                 ${gridCardsHTML}
             </div>
 
-            <script>
+           <script>
                 function addAmount(psid) {
                     let amount = prompt("กรอกจำนวนเงินที่ต้องการเพิ่ม:");
                     if (amount && !isNaN(amount)) {
@@ -428,8 +428,30 @@ app.get('/customer-grid', (req, res) => {
                             body: JSON.stringify({ action: 'add', psid: psid, amount: parseFloat(amount) }) 
                         })
                         .then(res => res.text())
-                        .then(data => { 
-                            alert(data); 
+                        .then(async data => { 
+                            alert('✅ เพิ่มยอดสำเร็จ! ระบบกำลังดึงข้อความสรุปยอด...');
+                            
+                            try {
+                                // 1. ดึงข้อความสรุปยอดประจำวันของลูกค้ารายนี้จากเซิร์ฟเวอร์
+                                let todayDate = '${todayDateStr}';
+                                let reportRes = await fetch('/customer-action', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ action: 'getDailyReportText', psid: psid, date: todayDate })
+                                });
+                                let reportData = await reportRes.json();
+                                
+                                if (reportData && reportData.text) {
+                                    // 2. คัดลอกข้อความลงคลิปบอร์ดอัตโนมัติ
+                                    await navigator.clipboard.writeText(reportData.text);
+                                    
+                                    // 3. แจ้งเตือนและแสดงข้อความให้กด Enter เพื่อนำไปวางส่งต่อได้ทันที
+                                    window.prompt("📋 คัดลอกข้อความสรุปยอดลงคลิปบอร์ดเรียบร้อยแล้ว! (กด Ctrl+C ยืนยัน หรือกด Enter ปิด):", reportData.text);
+                                }
+                            } catch (e) {
+                                console.error("Clipboard error:", e);
+                            }
+                            
                             location.reload(); 
                         })
                         .catch(err => {
